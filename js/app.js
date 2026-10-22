@@ -48,6 +48,9 @@
     x: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
     back: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
     bolt: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>',
+    heart: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>',
+    down: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 6 5 5 5-5"/><path d="m7 13 5 5 5-5"/></svg>',
+    phone: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>',
     shuffle: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2"/><path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"/><path d="m18 14 4 4-4 4"/></svg>',
   };
 
@@ -120,6 +123,11 @@
           <div class="quiz-card-top"><h3>${icons.bolt} Speedrun</h3></div>
           <p class="muted">Race the clock in Sprint, Time Attack or Sudden Death. Can you beat your personal best?</p>
           <div class="meta"><span>${icons.clock}3 game modes</span></div>
+        </a>
+        <a class="card quiz-card scroll-entry" href="#/scroll">
+          <div class="quiz-card-top"><h3>${icons.phone} Doomscroll</h3></div>
+          <p class="muted">An endless feed of questions. Swipe, answer, repeat. Like doomscrolling, but you learn something.</p>
+          <div class="meta"><span>${icons.down}Never ends</span></div>
         </a>
       </div>
       ${groups.map((g) => `
@@ -401,12 +409,14 @@
   const fmtRun = (ms) => { ms = Math.max(0, ms); return fmtClock(ms) + '.' + Math.floor((ms % 1000) / 100); };
   const fmtBest = (mode, v) => mode === 'sprint' ? fmtRun(v) : v + (mode === 'attack' ? ' correct' : ' streak');
 
-  // Every question for a subject, with the original site's repeated questions removed.
-  function speedPool(subjectId) {
+  // Every question for a subject (or 'all') with the quiz it came from, with the original site's repeated questions removed.
+  const qKey = (q) => q.question + '\n' + (q.code || '');
+  function uniqueQuestions(subjectId) {
     const seen = new Set();
-    return quizzes.filter((z) => subjectId === 'all' || z.subject === subjectId).flatMap((z) => z.questions)
-      .filter((q) => { const k = q.question + '\n' + (q.code || ''); return !seen.has(k) && seen.add(k); });
+    return quizzes.filter((z) => subjectId === 'all' || z.subject === subjectId).flatMap((quiz) => quiz.questions.map((q) => ({ q, quiz })))
+      .filter(({ q }) => { const k = qKey(q); return !seen.has(k) && seen.add(k); });
   }
+  const speedPool = (subjectId) => uniqueQuestions(subjectId).map((x) => x.q);
 
   let run = null;
   let runTimer = null;
@@ -628,6 +638,222 @@
     run = null;
   }
 
+  // ---------- doomscroll ----------
+  // An endless, snap-scrolling feed of questions. Batches are appended as you near the end;
+  // the subject pools reshuffle when exhausted, the saved feed ends with "all caught up".
+  const SCROLL_BATCH = 10, SCROLL_PRELOAD = 4, SCROLL_BREAK_EVERY = 25;
+  const SCROLL_FEEDS = [...speedSubjects, { id: 'saved', name: 'Saved', icon: '♥' }];
+  const BREAK_QUIPS = [
+    'Your posture called. It would like a word.',
+    'Blink twice. Drink some water. Then one more. Just one.',
+    'Touch grass? Grass doesn\'t come with explanations.',
+    'Still the most productive doomscroll on the internet.',
+    'Your streak is proud of you. Your neck is not.',
+  ];
+
+  let feed = null;
+  function stopFeed() {
+    if (feed) feed.observer.disconnect();
+    feed = null;
+    document.body.classList.remove('doomscroll');
+  }
+  const savedKeys = () => new Set(store.get('saved', []));
+  const setTopbarHeight = () => document.documentElement.style.setProperty('--topbar-h', document.querySelector('.topbar').offsetHeight + 'px');
+  window.addEventListener('resize', () => { if (feed) setTopbarHeight(); });
+
+  function startFeed(feedId) {
+    store.set('scroll-subject', feedId);
+    const saved = savedKeys();
+    const pool = feedId === 'saved' ? uniqueQuestions('all').filter(({ q }) => saved.has(qKey(q))) : uniqueQuestions(feedId);
+    document.body.classList.add('doomscroll');
+    setTopbarHeight();
+    app.innerHTML = `
+      <div class="scroll-view">
+        <div class="feed-bar">
+          <nav class="feed-chips">
+            ${SCROLL_FEEDS.map((s) => `<a class="chip ${s.id === feedId ? 'active' : ''}" href="#/scroll/${s.id}">${esc(s.icon)} ${s.name}${s.id === 'saved' ? ` <span class="tab-count">${saved.size}</span>` : ''}</a>`).join('')}
+          </nav>
+          <div class="feed-stats small" id="feed-stats"></div>
+        </div>
+        <div class="feed" id="feed" tabindex="-1"></div>
+      </div>`;
+    const el = app.querySelector('#feed');
+    feed = {
+      id: feedId, el, pool: shuffle(pool), next: 0, items: [], current: null, done: false,
+      answered: 0, correct: 0, streak: 0,
+      // A reel is "current" while it crosses the middle of the feed.
+      observer: new IntersectionObserver((entries) => {
+        for (const e of entries) if (e.isIntersecting) onReelVisible(e.target);
+      }, { root: el, rootMargin: '-50% 0px -50% 0px' }),
+    };
+    el.addEventListener('click', onFeedClick);
+    el.addEventListener('dblclick', onFeedDblClick);
+    if (!pool.length) {
+      el.innerHTML = `<section class="reel"><div class="card reel-card break-card">
+        <div class="big">${icons.heart}</div><h2>Nothing saved yet</h2>
+        <p class="muted">Tap the heart (or double-tap a question) to save it here for later.</p>
+        <a class="btn primary" href="#/scroll/all">Start scrolling</a></div></section>`;
+    } else {
+      appendBatch();
+    }
+    updateFeedStats();
+    el.focus({ preventScroll: true });
+  }
+
+  function appendBatch() {
+    const f = feed;
+    let html = '';
+    for (let n = 0; n < SCROLL_BATCH && !f.done; n++) {
+      if (f.next >= f.pool.length) {
+        if (f.id === 'saved') {
+          f.done = true;
+          html += `<section class="reel"><div class="card reel-card break-card">
+            <div class="big">${icons.check}</div><h2>You're all caught up</h2>
+            <p class="muted">That's every saved question.</p>
+            <div class="result-actions"><a class="btn primary" href="#/scroll/saved">${icons.shuffle} Go again</a><a class="btn" href="#/scroll/all">Scroll everything</a></div>
+            </div></section>`;
+          break;
+        }
+        f.pool = shuffle(f.pool);
+        f.next = 0;
+      }
+      const { q, quiz } = f.pool[f.next++];
+      f.items.push({ q: prepareQuestion(q, true), quiz, chosen: null });
+      html += reelHtml(f.items.length - 1);
+      if (f.items.length % SCROLL_BREAK_EVERY === 0) {
+        const k = f.items.length / SCROLL_BREAK_EVERY;
+        html += `<section class="reel"><div class="card reel-card break-card">
+          <div class="big">${icons.phone}</div><h2>${f.items.length} questions deep</h2>
+          <p class="muted">${BREAK_QUIPS[(k - 1) % BREAK_QUIPS.length]}</p>
+          <p class="muted small swipe-hint">Keep scrolling ${icons.down}</p></div></section>`;
+      }
+    }
+    f.el.insertAdjacentHTML('beforeend', html);
+    f.el.querySelectorAll('.reel:not([data-watched])').forEach((r) => { r.dataset.watched = ''; f.observer.observe(r); });
+  }
+
+  function reelHtml(i) {
+    const { q, quiz } = feed.items[i];
+    const { text, code } = splitQuestion(q);
+    const saved = savedKeys().has(qKey(q.source));
+    return `
+      <section class="reel" data-reel="${i}">
+        <div class="card reel-card">
+          <div class="reel-meta">
+            <span class="badge badge-${quiz.subject}">${subjectOf(quiz.subject).icon}</span>
+            <a class="muted small" href="#/quiz/${quiz.id}">${esc(quiz.title)}</a>
+          </div>
+          <h2 class="q-text">${rich(text)}</h2>
+          ${code ? `<pre class="code"><code>${esc(code)}</code></pre>` : ''}
+          <div class="options">${q.options.map((opt, j) =>
+            `<button class="option" data-feed-opt="${j}"><span class="letter">${LETTERS[j]}</span><span class="opt-text">${rich(opt)}</span></button>`).join('')}
+          </div>
+          <div class="reel-feedback"></div>
+        </div>
+        <div class="reel-rail">
+          <button class="rail-btn ${saved ? 'on' : ''}" data-save title="Save (S)" aria-pressed="${saved}">${icons.heart}<span>${saved ? 'Saved' : 'Save'}</span></button>
+          <button class="rail-btn" data-step title="Next (↓)">${icons.down}<span>Next</span></button>
+        </div>
+      </section>`;
+  }
+
+  function onReelVisible(reel) {
+    feed.current = reel;
+    if ([...feed.el.children].indexOf(reel) >= feed.el.children.length - SCROLL_PRELOAD && !feed.done) appendBatch();
+  }
+
+  function onFeedClick(e) {
+    const reel = e.target.closest('.reel');
+    if (!reel || reel.dataset.reel == null) return;
+    const opt = e.target.closest('[data-feed-opt]');
+    if (opt) answerReel(reel, +opt.dataset.feedOpt);
+    else if (e.target.closest('[data-save]')) toggleSave(reel);
+    else if (e.target.closest('[data-step]')) stepFeed(1, reel);
+  }
+
+  // Double-tap a question to save it, like liking a post.
+  function onFeedDblClick(e) {
+    const reel = e.target.closest('.reel');
+    if (!reel || reel.dataset.reel == null || e.target.closest('button, a')) return;
+    window.getSelection()?.removeAllRanges();
+    if (!reel.querySelector('[data-save]').classList.contains('on')) toggleSave(reel);
+    const pop = document.createElement('span');
+    pop.className = 'heart-pop';
+    pop.innerHTML = icons.heart;
+    reel.querySelector('.reel-card').appendChild(pop);
+    pop.addEventListener('animationend', () => pop.remove());
+  }
+
+  function toggleSave(reel) {
+    const key = qKey(feed.items[+reel.dataset.reel].q.source);
+    const saved = store.get('saved', []);
+    const on = !saved.includes(key);
+    store.set('saved', on ? [...saved, key] : saved.filter((k) => k !== key));
+    const btn = reel.querySelector('[data-save]');
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', on);
+    btn.querySelector('span').textContent = on ? 'Saved' : 'Save';
+    const count = app.querySelector('.chip[href="#/scroll/saved"] .tab-count');
+    if (count) count.textContent = on ? saved.length + 1 : saved.length - 1;
+  }
+
+  function answerReel(reel, j) {
+    const it = feed.items[+reel.dataset.reel];
+    if (it.chosen != null) return;
+    it.chosen = j;
+    const q = it.q;
+    const ok = j === q.correctIndex;
+    feed.answered++;
+    if (ok) {
+      feed.correct++;
+      feed.streak++;
+      const stats = store.get('scroll', {});
+      if (feed.streak > (stats.best || 0)) store.set('scroll', { ...stats, best: feed.streak });
+    } else {
+      feed.streak = 0;
+    }
+    reel.querySelectorAll('[data-feed-opt]').forEach((b) => {
+      const k = +b.dataset.feedOpt;
+      b.disabled = true;
+      b.classList.add(k === q.correctIndex ? 'correct' : k === j ? 'wrong' : 'dim');
+      if (k === q.correctIndex) b.querySelector('.letter').innerHTML = icons.check;
+      else if (k === j) b.querySelector('.letter').innerHTML = icons.x;
+    });
+    reel.querySelector('.reel-feedback').innerHTML = `
+      <div class="feedback ${ok ? 'ok' : 'bad'}">
+        <div class="feedback-title">${ok ? icons.check + (feed.streak > 2 ? ` ${feed.streak} in a row!` : ' Correct!') : icons.x + ' Not quite'}</div>
+        ${!ok && q.wrongExplanations[j] ? `<p><strong>Why your answer is wrong:</strong> ${rich(q.wrongExplanations[j])}</p>` : ''}
+        <p><strong>Explanation:</strong> ${rich(q.explanation)}</p>
+      </div>
+      <p class="muted small swipe-hint">Scroll for the next one ${icons.down}</p>`;
+    updateFeedStats();
+  }
+
+  function updateFeedStats() {
+    const best = store.get('scroll', {}).best || 0;
+    app.querySelector('#feed-stats').innerHTML = `
+      <span class="${feed.streak > 2 ? 'hot' : ''}" title="Current streak">🔥 ${feed.streak}</span>
+      <span class="muted" title="Best streak">Best ${best}</span>
+      <span class="muted" title="Correct / answered">${feed.correct}/${feed.answered}</span>`;
+  }
+
+  function stepFeed(d, from = feed.current) {
+    const target = from && (d > 0 ? from.nextElementSibling : from.previousElementSibling);
+    if (target) target.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (!feed || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toUpperCase();
+    if (e.key === 'ArrowDown' || k === 'J') { e.preventDefault(); stepFeed(1); return; }
+    if (e.key === 'ArrowUp' || k === 'K') { e.preventDefault(); stepFeed(-1); return; }
+    const reel = feed.current;
+    if (!reel || reel.dataset.reel == null) return;
+    if (k === 'S') { e.preventDefault(); toggleSave(reel); return; }
+    const idx = /^[1-9]$/.test(k) ? +k - 1 : LETTERS.indexOf(k);
+    if (idx >= 0 && idx < feed.items[+reel.dataset.reel].q.options.length) { e.preventDefault(); answerReel(reel, idx); }
+  });
+
   // ---------- keyboard ----------
   document.addEventListener('keydown', (e) => {
     if (!run || run.locked || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -654,9 +880,16 @@
     const hash = location.hash || '#/';
     const m = /^#\/quiz\/([\w-]+)/.exec(hash);
     const sr = /^#\/speedrun(?:\/(\w+)\/(\w+))?\/?$/.exec(hash);
+    const ds = /^#\/scroll(?:\/(\w+))?\/?$/.exec(hash);
     session = null; clearInterval(timerId); confirmSubmit = false;
     stopRun();
-    if (sr) {
+    stopFeed();
+    if (ds) {
+      const fallback = store.get('scroll-subject', 'all');
+      const id = [ds[1], fallback, 'all'].find((x) => SCROLL_FEEDS.some((s) => s.id === x));
+      if (id !== ds[1]) return void location.replace('#/scroll/' + id);
+      startFeed(id);
+    } else if (sr) {
       if (sr[1] && SPEED_MODES[sr[1]] && speedSubjectOf(sr[2])) startRun(sr[1], sr[2]);
       else renderSpeedHome();
     } else if (m) {

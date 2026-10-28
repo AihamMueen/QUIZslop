@@ -642,6 +642,8 @@
   // An endless, snap-scrolling feed of questions. Batches are appended as you near the end;
   // the subject pools reshuffle when exhausted, the saved feed ends with "all caught up".
   const SCROLL_BATCH = 10, SCROLL_PRELOAD = 4, SCROLL_BREAK_EVERY = 25;
+  // Auto-scroll delay after answering; wrong answers wait longer so there's time to read why.
+  const SCROLL_AUTO_OK_MS = 2500, SCROLL_AUTO_BAD_MS = 6000;
   const SCROLL_FEEDS = [...speedSubjects, { id: 'saved', name: 'Saved', icon: '♥' }];
   const BREAK_QUIPS = [
     'Your posture called. It would like a word.',
@@ -653,7 +655,7 @@
 
   let feed = null;
   function stopFeed() {
-    if (feed) feed.observer.disconnect();
+    if (feed) { feed.observer.disconnect(); cancelAutoScroll(); }
     feed = null;
     document.body.classList.remove('doomscroll');
   }
@@ -673,14 +675,17 @@
           <nav class="feed-chips">
             ${SCROLL_FEEDS.map((s) => `<a class="chip ${s.id === feedId ? 'active' : ''}" href="#/scroll/${s.id}">${esc(s.icon)} ${s.name}${s.id === 'saved' ? ` <span class="tab-count">${saved.size}</span>` : ''}</a>`).join('')}
           </nav>
-          <div class="feed-stats small" id="feed-stats"></div>
+          <div class="feed-side">
+            <button class="chip" id="feed-auto" title="Scroll to the next question after answering"></button>
+            <div class="feed-stats small" id="feed-stats"></div>
+          </div>
         </div>
         <div class="feed" id="feed" tabindex="-1"></div>
       </div>`;
     const el = app.querySelector('#feed');
     feed = {
       id: feedId, el, pool: shuffle(pool), next: 0, items: [], current: null, done: false,
-      answered: 0, correct: 0, streak: 0,
+      answered: 0, correct: 0, streak: 0, auto: store.get('scroll-auto', true), autoTimer: null,
       // A reel is "current" while it crosses the middle of the feed.
       observer: new IntersectionObserver((entries) => {
         for (const e of entries) if (e.isIntersecting) onReelVisible(e.target);
@@ -688,6 +693,13 @@
     };
     el.addEventListener('click', onFeedClick);
     el.addEventListener('dblclick', onFeedDblClick);
+    app.querySelector('#feed-auto').addEventListener('click', () => {
+      feed.auto = !feed.auto;
+      store.set('scroll-auto', feed.auto);
+      if (!feed.auto) cancelAutoScroll();
+      renderAutoToggle();
+    });
+    renderAutoToggle();
     if (!pool.length) {
       el.innerHTML = `<section class="reel"><div class="card reel-card break-card">
         <div class="big">${icons.heart}</div><h2>Nothing saved yet</h2>
@@ -758,6 +770,7 @@
   }
 
   function onReelVisible(reel) {
+    if (reel !== feed.current) cancelAutoScroll();
     feed.current = reel;
     if ([...feed.el.children].indexOf(reel) >= feed.el.children.length - SCROLL_PRELOAD && !feed.done) appendBatch();
   }
@@ -769,6 +782,32 @@
     if (opt) answerReel(reel, +opt.dataset.feedOpt);
     else if (e.target.closest('[data-save]')) toggleSave(reel);
     else if (e.target.closest('[data-step]')) stepFeed(1, reel);
+    else if (e.target.closest('[data-stay]')) cancelAutoScroll();
+  }
+
+  function renderAutoToggle() {
+    const btn = app.querySelector('#feed-auto');
+    btn.classList.toggle('active', feed.auto);
+    btn.setAttribute('aria-pressed', feed.auto);
+    btn.innerHTML = `${icons.down} Auto ${feed.auto ? 'on' : 'off'}`;
+  }
+
+  function startAutoScroll(reel, ms) {
+    cancelAutoScroll();
+    feed.autoTimer = setTimeout(() => {
+      feed.autoTimer = null;
+      reel.querySelector('.auto-hint')?.remove();
+      if (feed.current === reel) stepFeed(1, reel);
+    }, ms);
+  }
+
+  // Stops a pending auto-scroll and puts the normal "scroll for the next one" hint back.
+  function cancelAutoScroll() {
+    if (!feed || !feed.autoTimer) return;
+    clearTimeout(feed.autoTimer);
+    feed.autoTimer = null;
+    const hint = feed.el.querySelector('.auto-hint');
+    if (hint) hint.outerHTML = `<p class="muted small swipe-hint">Scroll for the next one ${icons.down}</p>`;
   }
 
   // Double-tap a question to save it, like liking a post.
@@ -825,7 +864,11 @@
         ${!ok && q.wrongExplanations[j] ? `<p><strong>Why your answer is wrong:</strong> ${rich(q.wrongExplanations[j])}</p>` : ''}
         <p><strong>Explanation:</strong> ${rich(q.explanation)}</p>
       </div>
-      <p class="muted small swipe-hint">Scroll for the next one ${icons.down}</p>`;
+      ${feed.auto
+        ? `<div class="auto-hint"><div class="auto-bar"><span style="animation-duration:${ok ? SCROLL_AUTO_OK_MS : SCROLL_AUTO_BAD_MS}ms"></span></div>
+            <p class="muted small">Next question coming up · <button class="link-btn" data-stay>Stay here</button></p></div>`
+        : `<p class="muted small swipe-hint">Scroll for the next one ${icons.down}</p>`}`;
+    if (feed.auto) startAutoScroll(reel, ok ? SCROLL_AUTO_OK_MS : SCROLL_AUTO_BAD_MS);
     updateFeedStats();
   }
 

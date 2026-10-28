@@ -639,9 +639,11 @@
   }
 
   // ---------- doomscroll ----------
-  // An endless, snap-scrolling feed of questions. Batches are appended as you near the end;
-  // the subject pools reshuffle when exhausted, the saved feed ends with "all caught up".
-  const SCROLL_BATCH = 10, SCROLL_PRELOAD = 4, SCROLL_BREAK_EVERY = 25;
+  // An endless, snap-scrolling feed. js/adaptive.js decides which question comes next (from the player's skill,
+  // topic mastery and missed concepts) and does the scoring; this section renders reels and handles input.
+  // Reels are picked only a couple ahead of the current one, so the feed keeps adapting as you answer.
+  const Adaptive = window.Adaptive;
+  const SCROLL_AHEAD = 2, SCROLL_BREAK_EVERY = 25;
   // Auto-scroll delay after answering; wrong answers wait longer so there's time to read why.
   const SCROLL_AUTO_OK_MS = 2500, SCROLL_AUTO_BAD_MS = 6000;
   const SCROLL_FEEDS = [...speedSubjects, { id: 'saved', name: 'Saved', icon: '♥' }];
@@ -652,6 +654,20 @@
     'Still the most productive doomscroll on the internet.',
     'Your streak is proud of you. Your neck is not.',
   ];
+  const EVENTS = {
+    boss: { icon: '👑', name: 'Boss Post', blurb: 'One of the toughest questions in the bank. ×3 points.' },
+    hot: { icon: '🔥', name: 'Hot Streak', blurb: `Get this right and your next ${Adaptive.TUNING.HOT_LEN} correct answers score double.` },
+    comeback: { icon: '↩', name: 'Comeback', blurb: 'Get this right to win back half of the combo you just lost.' },
+    check: { icon: '🎯', name: 'Knowledge Check', blurb: 'You missed this topic earlier. Here\'s another question on it. ×1.5 points.' },
+    mystery: { icon: '❔', name: 'Mystery Post', blurb: 'Topic hidden, ×2 points. Clues help, but each one costs ×0.5.' },
+    quick: { icon: '⚡', name: 'Quick Take', blurb: 'True or false?' },
+  };
+  const MILESTONE_TEXT = {
+    answered: (n) => `${n} questions answered`,
+    combo: (n) => `${n} in a row`,
+    score: (n) => `${n.toLocaleString()} points`,
+  };
+  const fmtNum = (n) => n.toLocaleString();
 
   let feed = null;
   function stopFeed() {
@@ -663,10 +679,20 @@
   const setTopbarHeight = () => document.documentElement.style.setProperty('--topbar-h', document.querySelector('.topbar').offsetHeight + 'px');
   window.addEventListener('resize', () => { if (feed) setTopbarHeight(); });
 
+  // `popquiz-scroll` holds { best: best streak, bestScore: { <feed>: score } }.
+  function scrollStats() {
+    const raw = store.get('scroll', {});
+    const s = raw && typeof raw === 'object' ? raw : {};
+    const bestScore = s.bestScore && typeof s.bestScore === 'object' ? s.bestScore : {};
+    return { best: Number.isFinite(s.best) ? s.best : 0, bestScore };
+  }
+  const saveSession = () => store.set('scroll-session', { ...feed.session, at: Date.now() });
+
   function startFeed(feedId) {
     store.set('scroll-subject', feedId);
     const saved = savedKeys();
-    const pool = feedId === 'saved' ? uniqueQuestions('all').filter(({ q }) => saved.has(qKey(q))) : uniqueQuestions(feedId);
+    const entries = feedId === 'saved' ? uniqueQuestions('all').filter(({ q }) => saved.has(qKey(q))) : uniqueQuestions(feedId);
+    const session = Adaptive.sanitizeSession(store.get('scroll-session', null), feedId, Date.now());
     document.body.classList.add('doomscroll');
     setTopbarHeight();
     app.innerHTML = `
@@ -676,23 +702,32 @@
             ${SCROLL_FEEDS.map((s) => `<a class="chip ${s.id === feedId ? 'active' : ''}" href="#/scroll/${s.id}">${esc(s.icon)} ${s.name}${s.id === 'saved' ? ` <span class="tab-count">${saved.size}</span>` : ''}</a>`).join('')}
           </nav>
           <div class="feed-side">
-            <button class="chip" id="feed-auto" title="Scroll to the next question after answering"></button>
             <div class="feed-stats small" id="feed-stats"></div>
+            <button class="chip" id="feed-recap" title="Session recap" aria-label="Session recap">${icons.list}<span class="lbl">Recap</span></button>
+            <button class="chip" id="feed-auto" title="Scroll to the next question after answering"></button>
           </div>
         </div>
+        <div class="momentum" id="momentum"><span></span></div>
         <div class="feed" id="feed" tabindex="-1"></div>
       </div>`;
     const el = app.querySelector('#feed');
     feed = {
-      id: feedId, el, pool: shuffle(pool), next: 0, items: [], current: null, done: false,
-      answered: 0, correct: 0, streak: 0, auto: store.get('scroll-auto', true), autoTimer: null,
+      id: feedId, el, pool: Adaptive.buildPool(entries), strict: feedId === 'saved', shownAll: new Set(),
+      rng: Adaptive.mulberry32((Date.now() ^ (Math.random() * 2 ** 32)) >>> 0),
+      profile: Adaptive.sanitizeProfile(store.get('scroll-profile', null)),
+      session: session || Adaptive.newSession(feedId), resumed: !!(session && session.answered),
+      items: [], current: null, done: false,
+      auto: store.get('scroll-auto', true), autoTimer: null,
       // A reel is "current" while it crosses the middle of the feed.
-      observer: new IntersectionObserver((entries) => {
-        for (const e of entries) if (e.isIntersecting) onReelVisible(e.target);
+      observer: new IntersectionObserver((list) => {
+        for (const e of list) if (e.isIntersecting) onReelVisible(e.target);
       }, { root: el, rootMargin: '-50% 0px -50% 0px' }),
     };
     el.addEventListener('click', onFeedClick);
     el.addEventListener('dblclick', onFeedDblClick);
+    // Opening "Explain more" means you're reading: don't scroll away.
+    el.addEventListener('toggle', (e) => { if (e.target.open) cancelAutoScroll(); }, true);
+    app.querySelector('#feed-recap').addEventListener('click', showRecap);
     app.querySelector('#feed-auto').addEventListener('click', () => {
       feed.auto = !feed.auto;
       store.set('scroll-auto', feed.auto);
@@ -700,67 +735,91 @@
       renderAutoToggle();
     });
     renderAutoToggle();
-    if (!pool.length) {
+    if (!feed.pool.length) {
       el.innerHTML = `<section class="reel"><div class="card reel-card break-card">
         <div class="big">${icons.heart}</div><h2>Nothing saved yet</h2>
         <p class="muted">Tap the heart (or double-tap a question) to save it here for later.</p>
         <a class="btn primary" href="#/scroll/all">Start scrolling</a></div></section>`;
     } else {
-      appendBatch();
+      ensureAhead();
     }
     updateFeedStats();
     el.focus({ preventScroll: true });
   }
 
-  function appendBatch() {
+  // Keeps SCROLL_AHEAD reels queued after the current one.
+  function ensureAhead() {
     const f = feed;
-    let html = '';
-    for (let n = 0; n < SCROLL_BATCH && !f.done; n++) {
-      if (f.next >= f.pool.length) {
-        if (f.id === 'saved') {
-          f.done = true;
-          html += `<section class="reel"><div class="card reel-card break-card">
-            <div class="big">${icons.check}</div><h2>You're all caught up</h2>
-            <p class="muted">That's every saved question.</p>
-            <div class="result-actions"><a class="btn primary" href="#/scroll/saved">${icons.shuffle} Go again</a><a class="btn" href="#/scroll/all">Scroll everything</a></div>
-            </div></section>`;
-          break;
-        }
-        f.pool = shuffle(f.pool);
-        f.next = 0;
-      }
-      const { q, quiz } = f.pool[f.next++];
-      f.items.push({ q: prepareQuestion(q, true), quiz, chosen: null });
-      html += reelHtml(f.items.length - 1);
-      if (f.items.length % SCROLL_BREAK_EVERY === 0) {
-        const k = f.items.length / SCROLL_BREAK_EVERY;
-        html += `<section class="reel"><div class="card reel-card break-card">
-          <div class="big">${icons.phone}</div><h2>${f.items.length} questions deep</h2>
-          <p class="muted">${BREAK_QUIPS[(k - 1) % BREAK_QUIPS.length]}</p>
-          <p class="muted small swipe-hint">Keep scrolling ${icons.down}</p></div></section>`;
-      }
+    const cur = f.current ? [...f.el.children].indexOf(f.current) : 0;
+    while (!f.done && f.el.children.length - 1 - cur < SCROLL_AHEAD) appendReel();
+  }
+
+  function appendReel() {
+    const f = feed;
+    const pick = Adaptive.pickNext(f.pool, f.profile, f.session, f.rng, f.strict ? { exclude: f.shownAll, strict: true } : {});
+    if (!pick) {
+      f.done = true;
+      f.el.insertAdjacentHTML('beforeend', `<section class="reel"><div class="card reel-card break-card">
+        <div class="big">${icons.check}</div><h2>You're all caught up</h2>
+        <p class="muted">That's every saved question.</p>
+        <div class="result-actions"><a class="btn primary" href="#/scroll/saved">${icons.shuffle} Go again</a><button class="btn" data-recap>Session recap</button></div>
+        </div></section>`);
+      return;
+    }
+    f.shownAll.add(pick.item.key);
+    const it = { ...pick, q: prepareQuestion(pick.item.q, true), chosen: null, shownAt: 0, clues: 0 };
+    if (it.event === 'quick') it.quick = Adaptive.makeQuickTake(it.q, f.rng);
+    f.items.push(it);
+    let html = reelHtml(f.items.length - 1);
+    if (f.items.length % SCROLL_BREAK_EVERY === 0) {
+      const k = f.items.length / SCROLL_BREAK_EVERY;
+      html += `<section class="reel"><div class="card reel-card break-card">
+        <div class="big">${icons.phone}</div><h2>${f.items.length} questions deep</h2>
+        <p class="muted">${BREAK_QUIPS[(k - 1) % BREAK_QUIPS.length]}</p>
+        <div class="result-actions"><button class="btn" data-recap>${icons.list} How am I doing?</button></div>
+        <p class="muted small swipe-hint">Keep scrolling ${icons.down}</p></div></section>`;
     }
     f.el.insertAdjacentHTML('beforeend', html);
     f.el.querySelectorAll('.reel:not([data-watched])').forEach((r) => { r.dataset.watched = ''; f.observer.observe(r); });
   }
 
+  const pips = (d) => `<span class="diff" title="Difficulty ${d} / 5" aria-label="Difficulty ${d} of 5">${[1, 2, 3, 4, 5].map((n) => `<i class="${d >= n ? 'on' : d >= n - 0.5 ? 'half' : ''}"></i>`).join('')}</span>`;
+
+  function masteryHtml(topicId) {
+    const m = Adaptive.masteryOf(feed.profile, topicId);
+    if (m == null) return '';
+    const pct = Math.round(m * 100);
+    return `<span class="mastery" title="Topic mastery ${pct}%" aria-label="Topic mastery ${pct}%"><span style="width:${pct}%"></span></span>`;
+  }
+
+  const topicHtml = (quiz) => `<span class="badge badge-${quiz.subject}">${subjectOf(quiz.subject).icon}</span>
+    <a class="muted small" href="#/quiz/${quiz.id}">${esc(quiz.title)}</a>${masteryHtml(quiz.id)}`;
+
   function reelHtml(i) {
-    const { q, quiz } = feed.items[i];
+    const it = feed.items[i];
+    const { q, item } = it;
+    const ev = it.event && EVENTS[it.event];
     const { text, code } = splitQuestion(q);
     const saved = savedKeys().has(qKey(q.source));
+    const options = it.quick ? ['True', 'False'] : q.options;
     return `
-      <section class="reel" data-reel="${i}">
+      <section class="reel ${it.event ? 'event-' + it.event : ''}" data-reel="${i}">
         <div class="card reel-card">
+          ${ev ? `<div class="event-banner"><span class="event-icon" aria-hidden="true">${ev.icon}</span><div><strong>${ev.name}</strong><span class="muted small" data-event-blurb>${esc(ev.blurb)}</span></div></div>` : ''}
           <div class="reel-meta">
-            <span class="badge badge-${quiz.subject}">${subjectOf(quiz.subject).icon}</span>
-            <a class="muted small" href="#/quiz/${quiz.id}">${esc(quiz.title)}</a>
+            <span class="reel-topic" data-topic>${it.event === 'mystery' ? '<span class="badge badge-mystery">?</span><span class="muted small">Topic hidden</span>' : topicHtml(item.quiz)}</span>
+            ${pips(item.d)}
           </div>
           <h2 class="q-text">${rich(text)}</h2>
           ${code ? `<pre class="code"><code>${esc(code)}</code></pre>` : ''}
-          <div class="options">${q.options.map((opt, j) =>
-            `<button class="option" data-feed-opt="${j}"><span class="letter">${LETTERS[j]}</span><span class="opt-text">${rich(opt)}</span></button>`).join('')}
+          ${it.quick ? `<p class="quick-claim">The answer is <strong>${rich(q.options[it.quick.claim])}</strong></p>` : ''}
+          <div class="options ${it.quick ? 'two-up' : ''}">${options.map((opt, j) =>
+            `<button class="option" data-feed-opt="${j}"><span class="letter">${it.quick ? opt[0] : LETTERS[j]}</span><span class="opt-text">${it.quick ? opt : rich(opt)}</span></button>`).join('')}
           </div>
-          <div class="reel-feedback"></div>
+          ${it.event === 'mystery' ? `<div class="clues"><span class="muted small">Clues:</span>
+            <button class="chip" data-clue="topic">Reveal topic</button>
+            ${q.options.length > 2 ? '<button class="chip" data-clue="cut">Remove a wrong answer</button>' : ''}</div>` : ''}
+          <div class="reel-feedback" aria-live="polite"></div>
         </div>
         <div class="reel-rail">
           <button class="rail-btn ${saved ? 'on' : ''}" data-save title="Save (S)" aria-pressed="${saved}">${icons.heart}<span>${saved ? 'Saved' : 'Save'}</span></button>
@@ -772,14 +831,19 @@
   function onReelVisible(reel) {
     if (reel !== feed.current) cancelAutoScroll();
     feed.current = reel;
-    if ([...feed.el.children].indexOf(reel) >= feed.el.children.length - SCROLL_PRELOAD && !feed.done) appendBatch();
+    const it = reel.dataset.reel != null && feed.items[+reel.dataset.reel];
+    if (it && !it.shownAt) it.shownAt = performance.now();
+    ensureAhead();
   }
 
   function onFeedClick(e) {
+    if (e.target.closest('[data-recap]')) return showRecap();
     const reel = e.target.closest('.reel');
     if (!reel || reel.dataset.reel == null) return;
     const opt = e.target.closest('[data-feed-opt]');
+    const clue = e.target.closest('[data-clue]');
     if (opt) answerReel(reel, +opt.dataset.feedOpt);
+    else if (clue) useClue(reel, clue);
     else if (e.target.closest('[data-save]')) toggleSave(reel);
     else if (e.target.closest('[data-step]')) stepFeed(1, reel);
     else if (e.target.closest('[data-stay]')) cancelAutoScroll();
@@ -789,7 +853,8 @@
     const btn = app.querySelector('#feed-auto');
     btn.classList.toggle('active', feed.auto);
     btn.setAttribute('aria-pressed', feed.auto);
-    btn.innerHTML = `${icons.down} Auto ${feed.auto ? 'on' : 'off'}`;
+    btn.setAttribute('aria-label', `Auto-scroll ${feed.auto ? 'on' : 'off'}`);
+    btn.innerHTML = `${icons.down}<span class="lbl">Auto ${feed.auto ? 'on' : 'off'}</span>`;
   }
 
   function startAutoScroll(reel, ms) {
@@ -797,7 +862,7 @@
     feed.autoTimer = setTimeout(() => {
       feed.autoTimer = null;
       reel.querySelector('.auto-hint')?.remove();
-      if (feed.current === reel) stepFeed(1, reel);
+      if (feed.current === reel && !app.querySelector('.recap')) stepFeed(1, reel);
     }, ms);
   }
 
@@ -813,7 +878,7 @@
   // Double-tap a question to save it, like liking a post.
   function onFeedDblClick(e) {
     const reel = e.target.closest('.reel');
-    if (!reel || reel.dataset.reel == null || e.target.closest('button, a')) return;
+    if (!reel || reel.dataset.reel == null || e.target.closest('button, a, details')) return;
     window.getSelection()?.removeAllRanges();
     if (!reel.querySelector('[data-save]').classList.contains('on')) toggleSave(reel);
     const pop = document.createElement('span');
@@ -836,48 +901,171 @@
     if (count) count.textContent = on ? saved.length + 1 : saved.length - 1;
   }
 
-  function answerReel(reel, j) {
+  // Mystery post clues: reveal the topic, or knock out one wrong answer. Each lowers the points multiplier.
+  function useClue(reel, btn) {
     const it = feed.items[+reel.dataset.reel];
-    if (it.chosen != null) return;
+    if (it.chosen != null || btn.disabled) return;
+    btn.disabled = true;
+    it.clues++;
+    if (btn.dataset.clue === 'topic') {
+      reel.querySelector('[data-topic]').innerHTML = topicHtml(it.item.quiz);
+    } else {
+      const left = [...reel.querySelectorAll('[data-feed-opt]:not(:disabled)')].map((b) => +b.dataset.feedOpt).filter((j) => j !== it.q.correctIndex);
+      const j = left[Math.floor(feed.rng() * left.length)];
+      const b = reel.querySelector(`[data-feed-opt="${j}"]`);
+      b.disabled = true;
+      b.classList.add('cut');
+    }
+    reel.querySelector('[data-event-blurb]').textContent = `Clues used: ${it.clues}. Now worth ×${Adaptive.eventMultiplier('mystery', it.clues)} points.`;
+  }
+
+  function answerReel(reel, j) {
+    const f = feed;
+    const it = f.items[+reel.dataset.reel];
+    const btn = reel.querySelector(`[data-feed-opt="${j}"]`);
+    if (it.chosen != null || !btn || btn.disabled) return;
     it.chosen = j;
     const q = it.q;
-    const ok = j === q.correctIndex;
-    feed.answered++;
-    if (ok) {
-      feed.correct++;
-      feed.streak++;
-      const stats = store.get('scroll', {});
-      if (feed.streak > (stats.best || 0)) store.set('scroll', { ...stats, best: feed.streak });
-    } else {
-      feed.streak = 0;
+    const correctIdx = it.quick ? (it.quick.isTrue ? 0 : 1) : q.correctIndex;
+    const ok = j === correctIdx;
+    const prevScoreBest = scrollStats().bestScore[f.id] || 0;
+    const res = Adaptive.recordAnswer(f.profile, f.session, it, { correct: ok, ms: it.shownAt ? performance.now() - it.shownAt : 0 });
+    store.set('scroll-profile', f.profile);
+    saveSession();
+    const stats = scrollStats();
+    const newBestStreak = f.session.combo > stats.best;
+    const newBestScore = f.session.score > prevScoreBest;
+    if (newBestStreak || newBestScore) {
+      store.set('scroll', { ...stats, best: Math.max(stats.best, f.session.combo), bestScore: { ...stats.bestScore, [f.id]: Math.max(prevScoreBest, f.session.score) } });
     }
+
     reel.querySelectorAll('[data-feed-opt]').forEach((b) => {
       const k = +b.dataset.feedOpt;
       b.disabled = true;
-      b.classList.add(k === q.correctIndex ? 'correct' : k === j ? 'wrong' : 'dim');
-      if (k === q.correctIndex) b.querySelector('.letter').innerHTML = icons.check;
+      b.classList.add(k === correctIdx ? 'correct' : k === j ? 'wrong' : 'dim');
+      if (k === correctIdx) b.querySelector('.letter').innerHTML = icons.check;
       else if (k === j) b.querySelector('.letter').innerHTML = icons.x;
     });
+    reel.querySelectorAll('[data-clue]').forEach((b) => { b.disabled = true; });
+    if (it.event === 'mystery' && !it.clues) reel.querySelector('[data-topic]').innerHTML = topicHtml(it.item.quiz);
+
+    // For a quick take, "why your answer is wrong" is about the claimed option.
+    const shown = it.quick ? it.quick.claim : j;
+    const whyNot = !ok || (it.quick && !it.quick.isTrue) ? q.wrongExplanations[shown] : '';
+    const { brief, more } = Adaptive.splitExplanation(q.explanation);
+    const others = q.wrongExplanations.map((w, k) => (w && k !== shown && k !== q.correctIndex ? `<li><strong>${rich(q.options[k])}</strong>: ${rich(w)}</li>` : '')).join('');
+    const notes = [
+      res.restored ? `${icons.check} Comeback! Combo restored to ${res.combo}.` : '',
+      res.learned ? `🎯 Concept relearned: ${esc(it.item.quiz.title)}.` : '',
+      res.hotLit ? `🔥 Hot streak lit: your next ${Adaptive.TUNING.HOT_LEN} correct answers score double.` : '',
+      !ok && it.event === 'hot' ? 'The hot streak fizzled. Another chance will come.' : '',
+      !ok ? 'Noted. This topic will come back later as a knowledge check.' : '',
+      ...res.milestones.map((m) => `🏅 Milestone: ${MILESTONE_TEXT[m.kind](m.value)}`),
+      newBestScore && f.session.answered > 1 && prevScoreBest > 0 && res.points ? '⭐ New personal best score!' : '',
+    ].filter(Boolean);
+    const title = ok
+      ? `${icons.check} ${res.combo > 2 ? `${res.combo} in a row!` : 'Correct!'} <span class="points">+${fmtNum(res.points)}</span>${res.multiplier > 1 ? `<span class="mult">×${res.multiplier} combo</span>` : ''}${res.hotApplied ? '<span class="mult hot">×2 hot</span>' : ''}`
+      : `${icons.x} Not quite`;
     reel.querySelector('.reel-feedback').innerHTML = `
       <div class="feedback ${ok ? 'ok' : 'bad'}">
-        <div class="feedback-title">${ok ? icons.check + (feed.streak > 2 ? ` ${feed.streak} in a row!` : ' Correct!') : icons.x + ' Not quite'}</div>
-        ${!ok && q.wrongExplanations[j] ? `<p><strong>Why your answer is wrong:</strong> ${rich(q.wrongExplanations[j])}</p>` : ''}
-        <p><strong>Explanation:</strong> ${rich(q.explanation)}</p>
+        <div class="feedback-title">${title}</div>
+        ${it.quick ? `<p class="key">It's <strong>${it.quick.isTrue ? 'true' : 'false'}</strong>. The answer is <strong>${rich(q.options[q.correctIndex])}</strong>.</p>`
+          : !ok ? `<p class="key"><strong>Answer:</strong> ${rich(q.options[q.correctIndex])}</p>` : ''}
+        ${whyNot ? `<p><strong>Why not ${it.quick ? rich(q.options[shown]) : LETTERS[j]}:</strong> ${rich(whyNot)}</p>` : ''}
+        <p>${rich(brief)}</p>
+        ${more || others ? `<details class="more"><summary>Explain more</summary>${more ? `<p>${rich(more)}</p>` : ''}${others ? `<ul>${others}</ul>` : ''}</details>` : ''}
+        ${notes.map((n) => `<p class="note">${n}</p>`).join('')}
       </div>
-      ${feed.auto
+      ${f.auto
         ? `<div class="auto-hint"><div class="auto-bar"><span style="animation-duration:${ok ? SCROLL_AUTO_OK_MS : SCROLL_AUTO_BAD_MS}ms"></span></div>
             <p class="muted small">Next question coming up · <button class="link-btn" data-stay>Stay here</button></p></div>`
         : `<p class="muted small swipe-hint">Scroll for the next one ${icons.down}</p>`}`;
-    if (feed.auto) startAutoScroll(reel, ok ? SCROLL_AUTO_OK_MS : SCROLL_AUTO_BAD_MS);
-    updateFeedStats();
+
+    const card = reel.querySelector('.reel-card');
+    card.classList.remove('pop-ok', 'pop-bad');
+    void card.offsetWidth;
+    card.classList.add(ok ? 'pop-ok' : 'pop-bad');
+    if (res.points) {
+      const float = document.createElement('span');
+      float.className = 'points-float';
+      float.textContent = '+' + fmtNum(res.points);
+      card.appendChild(float);
+      float.addEventListener('animationend', () => float.remove());
+    }
+    if (f.auto) startAutoScroll(reel, ok ? SCROLL_AUTO_OK_MS : SCROLL_AUTO_BAD_MS);
+    updateFeedStats(ok);
+    ensureAhead();
   }
 
-  function updateFeedStats() {
-    const best = store.get('scroll', {}).best || 0;
+  function updateFeedStats(bump) {
+    const s = feed.session;
+    const best = scrollStats().bestScore[feed.id] || 0;
+    const mult = Adaptive.multiplierFor(s.combo);
     app.querySelector('#feed-stats').innerHTML = `
-      <span class="${feed.streak > 2 ? 'hot' : ''}" title="Current streak">🔥 ${feed.streak}</span>
-      <span class="muted" title="Best streak">Best ${best}</span>
-      <span class="muted" title="Correct / answered">${feed.correct}/${feed.answered}</span>`;
+      <span class="hud-score ${bump ? 'bump' : ''}" title="Session score${feed.resumed ? ' (resumed)' : ''}">⭐ ${fmtNum(s.score)}</span>
+      <span class="${s.combo > 2 ? 'hot' : ''}" title="Current streak">🔥 ${s.combo}${mult > 1 ? ` <b class="mult">×${mult}</b>` : ''}</span>
+      ${s.hot ? `<span class="hot" title="Hot streak: correct answers score double">×2 · ${s.hot} left</span>` : ''}
+      <span class="muted secondary" title="Personal best score for this feed">Best ${fmtNum(Math.max(best, s.score))}</span>
+      <span class="muted secondary" title="Correct / answered">${s.correct}/${s.answered}</span>`;
+    const { from, to } = Adaptive.nextMilestone(s);
+    const bar = app.querySelector('#momentum');
+    bar.title = to ? `${s.answered} / ${to} answered to the next milestone` : `${s.answered} answered`;
+    bar.firstElementChild.style.width = to ? `${((s.answered - from) / (to - from)) * 100}%` : '100%';
+  }
+
+  function topicRow(id) {
+    const quiz = quizzes.find((z) => z.id === id);
+    const t = feed.session.topics[id];
+    return quiz ? `<li><span class="badge badge-${quiz.subject}">${subjectOf(quiz.subject).icon}</span><span class="grow">${esc(quiz.title)}</span>
+      <span class="muted small">${t.c}/${t.n}</span>${masteryHtml(id)}</li>` : '';
+  }
+
+  // The session recap opens over the feed, only when asked for.
+  function showRecap() {
+    if (!feed || app.querySelector('.recap')) return;
+    cancelAutoScroll();
+    const s = feed.session;
+    const { strengths, improve } = Adaptive.recap(s);
+    const best = scrollStats().bestScore[feed.id] || 0;
+    const queued = Object.keys(feed.profile.missed).length;
+    const acc = s.answered ? Math.round((s.correct / s.answered) * 100) : 0;
+    app.querySelector('.scroll-view').insertAdjacentHTML('beforeend', `
+      <div class="recap" role="dialog" aria-modal="true" aria-labelledby="recap-title">
+        <div class="card recap-card">
+          <h2 id="recap-title">Session recap</h2>
+          ${s.answered ? `
+          <div class="recap-stats">
+            <div><b>${fmtNum(s.score)}</b><span>score${s.score && s.score >= best ? ' · best!' : ''}</span></div>
+            <div><b>${acc}%</b><span>${s.correct}/${s.answered} correct</span></div>
+            <div><b>${s.bestCombo}</b><span>best combo</span></div>
+          </div>
+          ${strengths.length ? `<h3>Going well</h3><ul class="topic-list">${strengths.slice(0, 4).map(topicRow).join('')}</ul>` : ''}
+          ${improve.length ? `<h3>Worth another look</h3><ul class="topic-list">${improve.slice(0, 4).map(topicRow).join('')}</ul>` : ''}
+          ${queued ? `<p class="muted small">${queued} missed question${queued === 1 ? '' : 's'} queued. Their topics come back as knowledge checks.</p>` : ''}`
+          : '<p class="muted">Answer a few questions and your recap shows up here.</p>'}
+          <div class="result-actions">
+            <button class="btn primary" data-recap-close>Keep scrolling</button>
+            ${s.answered ? '<button class="btn" data-recap-reset>Start a new session</button>' : ''}
+          </div>
+        </div>
+      </div>`);
+    const panel = app.querySelector('.recap');
+    panel.addEventListener('click', (e) => {
+      if (e.target === panel || e.target.closest('[data-recap-close]')) closeRecap();
+      else if (e.target.closest('[data-recap-reset]')) {
+        feed.session = Adaptive.newSession(feed.id);
+        feed.resumed = false;
+        saveSession();
+        updateFeedStats();
+        closeRecap();
+      }
+    });
+    panel.querySelector('[data-recap-close]').focus();
+  }
+
+  function closeRecap() {
+    app.querySelector('.recap')?.remove();
+    feed?.el.focus({ preventScroll: true });
   }
 
   function stepFeed(d, from = feed.current) {
@@ -887,14 +1075,17 @@
 
   document.addEventListener('keydown', (e) => {
     if (!feed || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (app.querySelector('.recap')) { if (e.key === 'Escape') { e.preventDefault(); closeRecap(); } return; }
+    if (e.target.closest && e.target.closest('summary, .link-btn') && (e.key === 'Enter' || e.key === ' ')) return;
     const k = e.key.toUpperCase();
     if (e.key === 'ArrowDown' || k === 'J') { e.preventDefault(); stepFeed(1); return; }
     if (e.key === 'ArrowUp' || k === 'K') { e.preventDefault(); stepFeed(-1); return; }
     const reel = feed.current;
     if (!reel || reel.dataset.reel == null) return;
     if (k === 'S') { e.preventDefault(); toggleSave(reel); return; }
-    const idx = /^[1-9]$/.test(k) ? +k - 1 : LETTERS.indexOf(k);
-    if (idx >= 0 && idx < feed.items[+reel.dataset.reel].q.options.length) { e.preventDefault(); answerReel(reel, idx); }
+    const it = feed.items[+reel.dataset.reel];
+    const idx = it.quick && (k === 'T' || k === 'F') ? (k === 'T' ? 0 : 1) : /^[1-9]$/.test(k) ? +k - 1 : LETTERS.indexOf(k);
+    if (idx >= 0 && idx < (it.quick ? 2 : it.q.options.length)) { e.preventDefault(); answerReel(reel, idx); }
   });
 
   // ---------- keyboard ----------

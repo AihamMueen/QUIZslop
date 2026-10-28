@@ -133,6 +133,22 @@ code, pre { font-family: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Con
 .quiz-card p { margin: 0.4rem 0 0.9rem; font-size: 0.92rem; flex: 1; }
 .quiz-card-top { display: flex; justify-content: space-between; gap: 0.5rem; align-items: flex-start; }
 .mix-card { border-style: dashed; border-color: var(--primary); background: linear-gradient(135deg, var(--primary-soft), transparent 70%), var(--card); }
+.mistakes-card { border-style: dashed; border-color: var(--danger); background: linear-gradient(135deg, var(--danger-soft), transparent 70%), var(--card); }
+.search { position: relative; max-width: 560px; margin: 0 auto 1.25rem; }
+.search svg { position: absolute; left: 0.9rem; top: 50%; transform: translateY(-50%); color: var(--muted-foreground); pointer-events: none; }
+.search input {
+  width: 100%; font: inherit; color: var(--foreground); background: var(--card); border: 1px solid var(--border);
+  border-radius: 999px; padding: 0.65rem 1rem 0.65rem 2.6rem; box-shadow: var(--shadow);
+}
+.search input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.search-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.search-list a {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 0.75rem; align-items: center;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.7rem 0.9rem; color: inherit; text-decoration: none;
+}
+.search-list a:hover { border-color: var(--primary); }
+.search-q { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .search-list a { grid-template-columns: auto 1fr; } .search-list a > .small { grid-column: 2; } }
 .meta { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.85rem; color: var(--muted-foreground); align-items: center; }
 .meta span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .meta.center { justify-content: center; }
@@ -170,6 +186,13 @@ code, pre { font-family: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Con
 .q-top { display: flex; justify-content: flex-end; }
 .q-text { font-size: 1.2rem; margin: 0.25rem 0 1rem; line-height: 1.45; font-weight: 650; }
 .code { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.1rem; border-radius: 10px; overflow-x: auto; font-size: 0.9rem; line-height: 1.55; margin: 0 0 1.25rem; }
+/* Syntax tokens from js/highlight.js. --code-bg is dark in both themes, so one palette covers both. */
+.tok-comment { color: hsl(220 12% 58%); font-style: italic; }
+.tok-string { color: hsl(95 45% 68%); }
+.tok-number, .tok-literal { color: hsl(28 85% 68%); }
+.tok-keyword { color: hsl(280 70% 76%); }
+.tok-builtin { color: hsl(190 70% 66%); }
+.tok-call { color: hsl(215 90% 74%); }
 .options { display: grid; gap: 0.65rem; }
 .option {
   display: flex; align-items: center; gap: 0.8rem; text-align: left; width: 100%;

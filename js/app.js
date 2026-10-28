@@ -26,6 +26,10 @@
   const fmtClock = (ms) => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
   const subjectOf = (id) => subjects.find((s) => s.id === id);
 
+  // Code blocks are highlighted in the language of the question's subject.
+  const subjectOfQuestion = new Map(quizzes.flatMap((z) => z.questions.map((q) => [q, z.subject])));
+  const codeBlock = (code, q) => `<pre class="code"><code>${window.Highlight.code(code, subjectOfQuestion.get(q.source || q))}</code></pre>`;
+
   // Inline `code` inside text -> <code>
   const rich = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
 
@@ -68,10 +72,64 @@
         questions: pool, pickCount: Math.min(MIX_SIZE, pool.length),
       };
     }
+    const mm = /^mistakes-(\w+)$/.exec(id);
+    if (mm && subjectOf(mm[1])) {
+      const keys = mistakeKeys();
+      const pool = uniqueQuestions(mm[1]).map((x) => x.q).filter((q) => keys.has(qKey(q)));
+      return {
+        id, subject: mm[1], semester: 'Practice', random: true, mistakes: true,
+        title: subjectOf(mm[1]).name + ' Mistakes',
+        description: `Questions you got wrong in quizzes, speedruns and the feed. Answer one right and it leaves the deck.`,
+        questions: pool, pickCount: Math.min(MIX_SIZE, pool.length),
+      };
+    }
+    const sm = /^search\/(.+)$/.exec(id);
+    if (sm) {
+      let term = '';
+      try { term = decodeURIComponent(sm[1]); } catch (e) { /* malformed URL: no matches */ }
+      const found = searchQuestions(term);
+      const pool = found.map((x) => x.q);
+      const subs = [...new Set(found.map((x) => x.quiz.subject))];
+      return {
+        id, subject: subs.length === 1 ? subs[0] : 'all', semester: 'Practice', random: true,
+        title: `Search: “${term}”`,
+        description: `${pool.length} matching question${pool.length === 1 ? '' : 's'}` + (pool.length > MIX_SIZE ? `, ${MIX_SIZE} picked at random each time.` : '.'),
+        questions: pool, pickCount: Math.min(MIX_SIZE, pool.length),
+      };
+    }
     return null;
   }
 
+  // ---------- mistakes deck ----------
+  // `popquiz-mistakes` is a list of qKey()s for questions answered wrong; a right answer anywhere removes it.
+  const MISTAKES_MAX = 500;
+  const mistakeKeys = () => { const v = store.get('mistakes', []); return new Set(Array.isArray(v) ? v.filter((k) => typeof k === 'string') : []); };
+  function recordResults(results) {
+    const keys = mistakeKeys();
+    for (const { q, ok } of results) {
+      const k = qKey(q.source || q);
+      keys.delete(k);
+      if (!ok) keys.add(k); // re-adding moves it to the end, so the cap drops the oldest
+    }
+    store.set('mistakes', [...keys].slice(-MISTAKES_MAX));
+  }
+  const mistakeCount = (subjectId) => { const keys = mistakeKeys(); return uniqueQuestions(subjectId).filter(({ q }) => keys.has(qKey(q))).length; };
+
+  // ---------- search ----------
+  // Every whitespace-separated word must appear in the question, its code or its options (case-insensitive).
+  function searchQuestions(term) {
+    const words = term.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    return uniqueQuestions('all').filter(({ q }) => {
+      const hay = (q.question + '\n' + (q.code || '') + '\n' + q.options.join('\n')).toLowerCase();
+      return words.every((w) => hay.includes(w));
+    });
+  }
+
   // ---------- views ----------
+  let homeQuery = ''; // kept while the page is open, so "Back to quizzes" returns to the same search
+  const SEARCH_PREVIEW = 30;
+
   function renderHome() {
     const current = store.get('subject', 'python');
     const subject = subjectOf(current) || subjects[0];
@@ -99,15 +157,23 @@
             <span>${icons.list}${count} questions</span>
             <span>${icons.clock}${estTime(count)}</span>
             ${z.added ? `<span class="pill new">+${z.added} new</span>` : ''}
+            ${z.mistakes ? `<span class="pill low">${z.questions.length} to fix</span>` : ''}
           </div>
         </a>`;
     };
+    const mistakes = getQuiz('mistakes-' + subject.id);
 
     app.innerHTML = `
       <section class="hero">
         <h1>Choose a Quiz</h1>
         <p class="muted">Select a quiz to test your knowledge</p>
       </section>
+      <div class="search">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="search" id="search" placeholder="Search every question… (press /)" aria-label="Search questions" value="${esc(homeQuery)}" autocomplete="off" />
+      </div>
+      <div id="search-results" hidden></div>
+      <div id="browse">
       <nav class="tabs" role="tablist">
         ${subjects.map((s) => `
           <button role="tab" class="tab ${s.id === subject.id ? 'active' : ''}" data-subject="${s.id}" aria-selected="${s.id === subject.id}">
@@ -119,6 +185,7 @@
       <p class="muted subject-blurb">${esc(subject.blurb)} ${list.length} quizzes · ${totals[subject.id]} questions.</p>
       <div class="grid">
         ${card(getQuiz('mix-' + subject.id), 'mix-card')}
+        ${mistakes.questions.length ? card(mistakes, 'mistakes-card') : ''}
         <a class="card quiz-card speed-entry" href="#/speedrun">
           <div class="quiz-card-top"><h3>${icons.bolt} Speedrun</h3></div>
           <p class="muted">Race the clock in Sprint, Time Attack or Sudden Death. Can you beat your personal best?</p>
@@ -133,10 +200,45 @@
       ${groups.map((g) => `
         <h2 class="group-title">${esc(g.name)}</h2>
         <div class="grid">${g.items.map((z) => card(z)).join('')}</div>`).join('')}
+      </div>
     `;
+
+    const input = app.querySelector('#search');
+    input.addEventListener('input', () => { homeQuery = input.value; renderSearch(card); });
+    if (homeQuery) renderSearch(card);
 
     app.querySelectorAll('[data-subject]').forEach((btn) =>
       btn.addEventListener('click', () => { store.set('subject', btn.dataset.subject); renderHome(); }));
+  }
+
+  // Replaces the quiz browser with matching quizzes and questions while the search box has text.
+  function renderSearch(card) {
+    const term = homeQuery.trim();
+    const box = app.querySelector('#search-results');
+    box.hidden = !term;
+    app.querySelector('#browse').hidden = !!term;
+    if (!term) return;
+    const lower = term.toLowerCase();
+    const quizHits = quizzes.filter((z) => (z.title + ' ' + z.description).toLowerCase().includes(lower));
+    const found = searchQuestions(term);
+    const practice = found.length ? getQuiz('search/' + encodeURIComponent(term)) : null;
+    box.innerHTML = `
+      <p class="muted subject-blurb">${found.length} question${found.length === 1 ? '' : 's'} and ${quizHits.length} quiz${quizHits.length === 1 ? '' : 'zes'} match “${esc(term)}”.</p>
+      ${practice || quizHits.length ? `<div class="grid">
+        ${practice ? card(practice, 'mix-card') : ''}
+        ${quizHits.map((z) => card(z)).join('')}
+      </div>` : '<p class="muted center">Nothing matches. Try a shorter or different word, like <code>pointer</code> or <code>closure</code>.</p>'}
+      ${found.length ? `
+        <h2 class="group-title">Matching questions</h2>
+        <ul class="search-list">
+          ${found.slice(0, SEARCH_PREVIEW).map(({ q, quiz }) => `
+            <li><a href="#/quiz/${quiz.id}">
+              <span class="badge badge-${quiz.subject}">${subjectOf(quiz.subject).icon}</span>
+              <span class="search-q">${rich(splitQuestion(q).text)}</span>
+              <span class="muted small">${esc(quiz.title)}</span>
+            </a></li>`).join('')}
+        </ul>
+        ${found.length > SEARCH_PREVIEW ? `<p class="muted small center">Showing ${SEARCH_PREVIEW} of ${found.length}. Practise them all with the card above.</p>` : ''}` : ''}`;
   }
 
   function renderModeSelect(quiz) {
@@ -145,7 +247,7 @@
     app.innerHTML = `
       <a href="#/" class="back-link">${icons.back} Back to quizzes</a>
       <div class="card mode-card">
-        <span class="badge badge-${quiz.subject}">${subjectOf(quiz.subject).icon}</span>
+        <span class="badge badge-${quiz.subject}">${speedSubjectOf(quiz.subject).icon}</span>
         <h1>${esc(quiz.title)}</h1>
         <p class="muted">${esc(quiz.description)}</p>
         <div class="meta center">
@@ -276,7 +378,7 @@
       <div class="card question-card">
         <div class="q-top"><span class="muted small">1 mark</span></div>
         <h2 class="q-text">${rich(text)}</h2>
-        ${code ? `<pre class="code"><code>${esc(code)}</code></pre>` : ''}
+        ${code ? codeBlock(code, q) : ''}
         <div class="options">${optionHtml}</div>
         ${feedback}
         <p class="unanswered-warning" id="warn" hidden></p>
@@ -333,6 +435,7 @@
     const total = s.questions.length;
     const marks = s.answers.filter((a, i) => a === s.questions[i].correctIndex).length;
     const pct = Math.round((marks / total) * 100);
+    recordResults(s.questions.map((q, i) => ({ q, ok: s.answers[i] === q.correctIndex })));
     if (!s.retry && !s.quiz.random) {
       const best = store.get('best', {});
       if (best[s.quiz.id] == null || pct > best[s.quiz.id]) { best[s.quiz.id] = pct; store.set('best', best); }
@@ -387,7 +490,7 @@
             <span class="status">${ok ? icons.check : icons.x}</span>
             <h3>Q${n}. ${rich(text)}</h3>
           </div>
-          ${code ? `<pre class="code"><code>${esc(code)}</code></pre>` : ''}
+          ${code ? codeBlock(code, q) : ''}
           <ul class="review-options">
             ${q.options.map((o, j) => `<li class="${j === q.correctIndex ? 'correct' : j === a ? 'wrong' : ''}"><span class="letter">${LETTERS[j]}</span><span>${rich(o)}</span>${j === q.correctIndex ? '<em>correct answer</em>' : j === a ? '<em>your answer</em>' : ''}</li>`).join('')}
           </ul>
@@ -515,7 +618,7 @@
     const { text, code } = splitQuestion(q);
     app.querySelector('#run-q').innerHTML = `
       <h2 class="q-text">${rich(text)}</h2>
-      ${code ? `<pre class="code"><code>${esc(code)}</code></pre>` : ''}
+      ${code ? codeBlock(code, q) : ''}
       <div class="options">${q.options.map((opt, i) =>
         `<button class="option" data-run-opt="${i}"><span class="letter">${LETTERS[i]}</span><span class="opt-text">${rich(opt)}</span></button>`).join('')}
       </div>`;
@@ -565,6 +668,7 @@
     const q = run.q;
     const ok = i === q.correctIndex;
     run.answered++;
+    recordResults([{ q, ok }]);
     let flash;
     if (ok) {
       run.correct++;
@@ -811,7 +915,7 @@
             ${pips(item.d)}
           </div>
           <h2 class="q-text">${rich(text)}</h2>
-          ${code ? `<pre class="code"><code>${esc(code)}</code></pre>` : ''}
+          ${code ? codeBlock(code, q) : ''}
           ${it.quick ? `<p class="quick-claim">The answer is <strong>${rich(q.options[it.quick.claim])}</strong></p>` : ''}
           <div class="options ${it.quick ? 'two-up' : ''}">${options.map((opt, j) =>
             `<button class="option" data-feed-opt="${j}"><span class="letter">${it.quick ? opt[0] : LETTERS[j]}</span><span class="opt-text">${it.quick ? opt : rich(opt)}</span></button>`).join('')}
@@ -930,6 +1034,8 @@
     const ok = j === correctIdx;
     const prevScoreBest = scrollStats().bestScore[f.id] || 0;
     const res = Adaptive.recordAnswer(f.profile, f.session, it, { correct: ok, ms: it.shownAt ? performance.now() - it.shownAt : 0 });
+    // A right quick take ("false" to a wrong claim) doesn't show you know the answer, so it only ever adds a mistake.
+    if (!it.quick || !ok) recordResults([{ q, ok }]);
     store.set('scroll-profile', f.profile);
     saveSession();
     const stats = scrollStats();
@@ -1109,10 +1215,21 @@
     else if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
   });
 
+  // "/" focuses the home search; Esc clears it.
+  document.addEventListener('keydown', (e) => {
+    const input = document.getElementById('search');
+    if (!input) return;
+    if (e.key === '/' && document.activeElement !== input && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+      e.preventDefault(); input.focus(); input.select();
+    } else if (e.key === 'Escape' && document.activeElement === input && input.value) {
+      input.value = ''; input.dispatchEvent(new Event('input'));
+    }
+  });
+
   // ---------- routing ----------
   function route() {
     const hash = location.hash || '#/';
-    const m = /^#\/quiz\/([\w-]+)/.exec(hash);
+    const m = /^#\/quiz\/([\w-]+(?:\/.+)?)/.exec(hash);
     const sr = /^#\/speedrun(?:\/(\w+)\/(\w+))?\/?$/.exec(hash);
     const ds = /^#\/scroll(?:\/(\w+))?\/?$/.exec(hash);
     session = null; clearInterval(timerId); confirmSubmit = false;
@@ -1128,7 +1245,11 @@
       else renderSpeedHome();
     } else if (m) {
       const quiz = getQuiz(m[1]);
-      if (quiz) renderModeSelect(quiz);
+      if (quiz && !quiz.questions.length) {
+        app.innerHTML = quiz.mistakes
+          ? `<div class="card center notfound"><h1>All clear</h1><p class="muted">No ${esc(subjectOf(quiz.subject).name)} mistakes left to fix.</p><a class="btn primary" href="#/">Back to quizzes</a></div>`
+          : `<div class="card center notfound"><h1>No matches</h1><p class="muted">No question matches that search.</p><a class="btn primary" href="#/">Back to quizzes</a></div>`;
+      } else if (quiz) renderModeSelect(quiz);
       else app.innerHTML = `<div class="card center notfound"><h1>404</h1><p class="muted">Oops! Page not found</p><a class="btn primary" href="#/">Return to Home</a></div>`;
     } else {
       renderHome();

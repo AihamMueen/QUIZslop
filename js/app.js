@@ -55,6 +55,7 @@
     heart: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>',
     down: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 6 5 5 5-5"/><path d="m7 13 5 5 5-5"/></svg>',
     phone: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>',
+    code: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>',
     shuffle: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2"/><path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"/><path d="m18 14 4 4-4 4"/></svg>',
   };
 
@@ -195,6 +196,11 @@
           <div class="quiz-card-top"><h3>${icons.phone} Doomscroll</h3></div>
           <p class="muted">An endless feed of questions. Swipe, answer, repeat. Like doomscrolling, but you learn something.</p>
           <div class="meta"><span>${icons.down}Never ends</span></div>
+        </a>
+        <a class="card quiz-card gym-entry" href="#/gym">
+          <div class="quiz-card-top"><h3>${icons.code} Code Gym</h3></div>
+          <p class="muted">Bite-size JavaScript puzzles: predict the output, find the bug, trace the code. Adapts to what you know.</p>
+          <div class="meta"><span>${icons.list}${window.CodeGym.challenges.length} challenges</span><span>${icons.clock}10–30s each</span></div>
         </a>
       </div>
       ${groups.map((g) => `
@@ -1194,6 +1200,341 @@
     if (idx >= 0 && idx < (it.quick ? 2 : it.q.options.length)) { e.preventDefault(); answerReel(reel, idx); }
   });
 
+  // ---------- code gym ----------
+  // A snap-scrolling feed of short JavaScript puzzles: predict the output, find the bug, trace the code.
+  // js/gym.js holds the challenges and decides what comes next (per-concept spacing and difficulty); this section
+  // renders the cards. Only GYM_AHEAD card is queued, and it is re-picked after each answer if it hasn't been seen,
+  // so the very next card already reflects that answer.
+  const Gym = window.CodeGym;
+  const GYM_AHEAD = 1;
+  const GYM_FILTERS = [{ id: 'all', name: 'Mixed', icon: '★' }, ...Object.entries(Gym.TYPES).map(([id, t]) => ({ id, name: t.short, icon: t.icon }))];
+  const GYM_STATES = { new: 'New', review: 'Review', learning: 'Learning', solid: 'Solid', mastered: 'Mastered' };
+  const GYM_SLOTS = {
+    review: { icon: '🎯', text: 'Review: you missed this concept earlier. Here is a different example.' },
+    stretch: { icon: '💪', text: 'Stretch: a step up from your usual level.' },
+    fresh: { icon: '✨', text: 'New concept' },
+  };
+
+  let gym = null;
+  function stopGym() {
+    if (gym) gym.observer.disconnect();
+    gym = null;
+  }
+  const saveGym = () => {
+    store.set('gym', gym.profile);
+    store.set('gym-session', { ...gym.session, at: Date.now() });
+  };
+  const gymMatches = (ch, filter) => filter === 'all' || ch.type === filter;
+
+  function startGym(filter) {
+    store.set('gym-filter', filter);
+    const pool = Gym.buildPool();
+    const session = Gym.sanitizeSession(store.get('gym-session', null), filter, Date.now());
+    document.body.classList.add('doomscroll');
+    setTopbarHeight();
+    app.innerHTML = `
+      <div class="scroll-view gym-view">
+        <div class="feed-bar">
+          <nav class="feed-chips" aria-label="Challenge type">
+            ${GYM_FILTERS.map((f) => `<a class="chip ${f.id === filter ? 'active' : ''}" href="#/gym/${f.id}">${esc(f.icon)} ${f.name}</a>`).join('')}
+          </nav>
+          <div class="feed-side">
+            <div class="feed-stats small" id="gym-stats"></div>
+            <button class="chip" id="gym-recap" title="Session summary" aria-label="Session summary">${icons.list}<span class="lbl">Summary</span></button>
+          </div>
+        </div>
+        <div class="momentum" id="momentum"><span></span></div>
+        <div class="feed" id="feed" tabindex="-1"></div>
+      </div>`;
+    const el = app.querySelector('#feed');
+    gym = {
+      filter, el, pool,
+      rng: Adaptive.mulberry32((Date.now() ^ (Math.random() * 2 ** 32)) >>> 0),
+      profile: Gym.sanitizeProfile(store.get('gym', null)),
+      session: session || Gym.newSession(filter),
+      items: [], current: null,
+      observer: new IntersectionObserver((list) => {
+        for (const e of list) if (e.isIntersecting) onGymVisible(e.target);
+      }, { root: el, rootMargin: '-50% 0px -50% 0px' }),
+    };
+    el.addEventListener('click', onGymClick);
+    app.querySelector('#gym-recap').addEventListener('click', showGymRecap);
+    if (!pool.some((ch) => gymMatches(ch, filter))) {
+      el.innerHTML = `<section class="reel"><div class="card reel-card break-card">
+        <div class="big">${icons.list}</div><h2>No challenges here yet</h2>
+        <p class="muted">There are no challenges of this type in the bank.</p>
+        <a class="btn primary" href="#/gym/all">Try the mixed feed</a></div></section>`;
+    } else {
+      ensureGymAhead();
+    }
+    updateGymStats();
+    el.focus({ preventScroll: true });
+  }
+
+  function ensureGymAhead() {
+    const g = gym;
+    const cur = g.current ? [...g.el.children].indexOf(g.current) : 0;
+    while (g.el.children.length - 1 - cur < GYM_AHEAD) if (!appendGymCard()) break;
+  }
+
+  function appendGymCard() {
+    const pick = Gym.pickNext(gym.pool, gym.profile, gym.session, gym.rng, { type: gym.filter });
+    if (!pick) return false;
+    const ch = pick.item;
+    // Options are shown in a random order; order[j] is the challenge's own index of the option shown at j.
+    const ids = Gym.isLineBug(ch) ? [] : ch.o.map((_, k) => k);
+    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(gym.rng() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+    gym.items.push({ ...pick, order: ids, chosen: null, hinted: false, seen: false });
+    gym.el.insertAdjacentHTML('beforeend', gymCardHtml(gym.items.length - 1));
+    gym.observer.observe(gym.el.lastElementChild);
+    return true;
+  }
+
+  // Code with line numbers, highlighted line by line. In "find the faulty line" each line is a button.
+  function gymCode(ch) {
+    const lineMode = Gym.isLineBug(ch);
+    const target = ch.m === 'fix' ? ch.line : -1;
+    const rows = Gym.lines(ch).map((l, n) => {
+      const inner = `<span class="ln" aria-hidden="true">${n + 1}</span><code>${window.Highlight.code(l, 'javascript') || ' '}</code>`;
+      return lineMode
+        ? `<button class="code-line" data-gym-opt="${n}" aria-label="Line ${n + 1}: ${esc(l.trim() || 'blank')}">${inner}</button>`
+        : `<div class="code-line ${n === target ? 'target' : ''}">${inner}</div>`;
+    }).join('');
+    return `<div class="code gym-code ${lineMode ? 'pick-lines' : ''}"${lineMode ? ' role="group" aria-label="Code lines: choose the faulty one"' : ''}>${rows}</div>`;
+  }
+
+  const gymOptionText = (ch, k) => (ch.m === 'fix' ? `<code class="fix-opt">${esc(ch.o[k])}</code>` : rich(ch.o[k]));
+  const gymLevel = (d) => `<span class="gym-level" title="Difficulty: ${Gym.LEVELS[d - 1]}"><span class="diff" aria-hidden="true">${[1, 2, 3].map((n) => `<i class="${d >= n ? 'on' : ''}"></i>`).join('')}</span>${Gym.LEVELS[d - 1]}</span>`;
+
+  function gymConceptHtml(id) {
+    const state = Gym.conceptState(gym.profile, id);
+    return `<span class="gym-concept state-${state}" title="Your level on this concept: ${GYM_STATES[state]}">${esc(Gym.conceptOf(id).name)}<b>${GYM_STATES[state]}</b></span>`;
+  }
+
+  function gymCardHtml(i) {
+    const it = gym.items[i], ch = it.item, type = Gym.TYPES[ch.type];
+    const slot = GYM_SLOTS[it.slot];
+    return `
+      <section class="reel gym-reel" data-gym="${i}">
+        <div class="card reel-card gym-card type-${ch.type}">
+          <div class="reel-meta gym-meta">
+            <span class="gym-type"><span aria-hidden="true">${type.icon}</span> ${type.name}</span>
+            ${gymConceptHtml(ch.concept)}
+            ${gymLevel(ch.d)}
+          </div>
+          ${slot ? `<p class="gym-slot slot-${it.slot}"><span aria-hidden="true">${slot.icon}</span> ${slot.text}</p>` : ''}
+          <h2 class="q-text">${rich(ch.q)}</h2>
+          ${gymCode(ch)}
+          ${Gym.isLineBug(ch)
+            ? '<p class="muted small gym-instr">Tap the faulty line, or press its number.</p>'
+            : `<div class="options">${it.order.map((k, j) => `<button class="option" data-gym-opt="${j}"><span class="letter">${LETTERS[j]}</span><span class="opt-text">${gymOptionText(ch, k)}</span></button>`).join('')}</div>`}
+          ${ch.hint ? `<div class="gym-hint"><button class="link-btn" data-gym-hint>Show a hint (halves the XP)</button></div>` : ''}
+          <div class="reel-feedback" aria-live="polite"></div>
+        </div>
+        <div class="reel-rail">
+          <button class="rail-btn" data-step title="Next (↓)">${icons.down}<span>Next</span></button>
+        </div>
+      </section>`;
+  }
+
+  function onGymVisible(reel) {
+    gym.current = reel;
+    const it = reel.dataset.gym != null && gym.items[+reel.dataset.gym];
+    if (it) it.seen = true;
+    ensureGymAhead();
+  }
+
+  function onGymClick(e) {
+    if (e.target.closest('[data-recap]')) return showGymRecap();
+    const reel = e.target.closest('.reel');
+    if (!reel || reel.dataset.gym == null) return;
+    const opt = e.target.closest('[data-gym-opt]');
+    if (opt) answerGym(reel, +opt.dataset.gymOpt);
+    else if (e.target.closest('[data-gym-hint]')) showGymHint(reel);
+    else if (e.target.closest('[data-step]')) stepFeed(1, reel);
+  }
+
+  function showGymHint(reel) {
+    const it = gym.items[+reel.dataset.gym];
+    const box = reel.querySelector('.gym-hint');
+    if (!box || it.chosen != null || it.hinted) return;
+    it.hinted = true;
+    box.innerHTML = `<p><strong>Hint:</strong> ${rich(it.item.hint)}</p>`;
+  }
+
+  function answerGym(reel, j) {
+    const it = gym.items[+reel.dataset.gym];
+    const ch = it.item, lineMode = Gym.isLineBug(ch);
+    const choice = lineMode ? j : it.order[j];
+    if (it.chosen != null || choice == null || choice >= Gym.choiceCount(ch)) return;
+    it.chosen = choice;
+    if (!it.seen) { it.seen = true; gym.current = reel; }
+    const res = Gym.recordAnswer(gym.profile, gym.session, it, { choice, hinted: it.hinted });
+    const ok = res.correct;
+
+    reel.querySelectorAll('[data-gym-opt]').forEach((b) => {
+      const k = lineMode ? +b.dataset.gymOpt : it.order[+b.dataset.gymOpt];
+      b.disabled = true;
+      b.classList.add(k === ch.a ? 'correct' : k === choice ? 'wrong' : 'dim');
+      const letter = b.querySelector('.letter');
+      if (letter && k === ch.a) letter.innerHTML = icons.check;
+      else if (letter && k === choice) letter.innerHTML = icons.x;
+    });
+    const hintBtn = reel.querySelector('[data-gym-hint]');
+    if (hintBtn) hintBtn.parentElement.remove();
+    reel.querySelector('.gym-concept').outerHTML = gymConceptHtml(ch.concept);
+
+    const concept = Gym.conceptOf(ch.concept).name;
+    const why = !ok && ch.w && ch.w[choice] ? ch.w[choice] : '';
+    const { brief, more } = Adaptive.splitExplanation(ch.e);
+    const others = (ch.w || []).map((w, k) => (w && k !== choice && k !== ch.a ? `<li><strong>${gymOptionText(ch, k)}</strong>: ${rich(w)}</li>` : '')).join('');
+    let fix = '';
+    if (ch.type === 'bug') {
+      const before = Gym.lines(ch)[lineMode ? ch.a : ch.line].trim();
+      const after = (lineMode ? ch.fix : ch.o[ch.a]).trim();
+      fix = `<div class="code gym-code gym-diff" aria-label="The fix">
+        <div class="code-line del"><span class="ln">−</span><code>${window.Highlight.code(before, 'javascript')}</code></div>
+        ${after ? `<div class="code-line add"><span class="ln">+</span><code>${window.Highlight.code(after, 'javascript')}</code></div>` : '<div class="code-line add"><span class="ln">+</span><code class="muted">(delete this line)</code></div>'}
+      </div>`;
+    }
+    const notes = [
+      res.relearned ? `🎯 Relearned: ${esc(concept)}. That earlier miss is cleared.` : '',
+      res.mastered ? `🏅 Concept mastered: ${esc(concept)}. It will come back less often.` : '',
+      !ok ? `${esc(concept)} will come back in a few cards with a different example.` : '',
+      ...res.milestones.map((n) => `🏅 ${n} challenges done this session`),
+    ].filter(Boolean);
+    const detail = (ch.steps ? `<ol class="gym-steps">${ch.steps.map((s) => `<li>${rich(s)}</li>`).join('')}</ol>` : '')
+      + (more ? `<p>${rich(more)}</p>` : '') + (others ? `<ul>${others}</ul>` : '');
+    reel.querySelector('.reel-feedback').innerHTML = `
+      <div class="feedback ${ok ? 'ok' : 'bad'}">
+        <div class="feedback-title">${ok ? `${icons.check} ${res.streak > 2 ? `${res.streak} in a row!` : 'Correct!'}` : `${icons.x} Not quite`}
+          <span class="points">+${res.xp} XP</span>${!ok ? '<span class="muted small">for learning</span>' : ''}</div>
+        ${!ok ? `<p class="key"><strong>Answer:</strong> ${lineMode ? `line ${ch.a + 1}` : gymOptionText(ch, ch.a)}</p>` : ''}
+        ${why ? `<p><strong>Why not that:</strong> ${rich(why)}</p>` : ''}
+        ${fix}
+        <p>${rich(brief)}</p>
+        ${detail ? `<details class="more"><summary>${ch.steps ? 'Step by step' : 'Explain more'}</summary>${detail}</details>` : ''}
+        ${notes.map((n) => `<p class="note">${n}</p>`).join('')}
+      </div>
+      <p class="muted small swipe-hint">Scroll or press Enter for the next one ${icons.down}</p>`;
+
+    const card = reel.querySelector('.reel-card');
+    card.classList.remove('pop-ok', 'pop-bad');
+    void card.offsetWidth;
+    card.classList.add(ok ? 'pop-ok' : 'pop-bad');
+    const float = document.createElement('span');
+    float.className = 'points-float';
+    float.textContent = `+${res.xp} XP`;
+    card.appendChild(float);
+    float.addEventListener('animationend', () => float.remove());
+
+    // Re-pick the queued card if nobody has seen it, so it reflects this answer.
+    const next = reel.nextElementSibling;
+    const ni = next && next.dataset.gym != null ? +next.dataset.gym : -1;
+    if (ni === gym.items.length - 1 && !gym.items[ni].seen && gym.items[ni].chosen == null) {
+      Gym.unpick(gym.session, gym.items.pop());
+      gym.observer.unobserve(next);
+      next.remove();
+    }
+    ensureGymAhead();
+    saveGym();
+    updateGymStats(ok);
+  }
+
+  function updateGymStats(bump) {
+    const s = gym.session;
+    app.querySelector('#gym-stats').innerHTML = `
+      <span class="hud-score ${bump ? 'bump' : ''}" title="XP this session (${fmtNum(gym.profile.xp)} in total)">⚡ ${fmtNum(s.xp)} XP</span>
+      <span class="${s.streak > 2 ? 'hot' : ''}" title="Correct in a row">🔥 ${s.streak}</span>
+      <span class="muted secondary" title="Correct / answered this session">${s.correct}/${s.answered}</span>
+      <span class="muted secondary" title="Total XP">Total ${fmtNum(gym.profile.xp)}</span>`;
+    const list = Gym.TUNING.MILESTONES;
+    const to = list.find((n) => n > s.answered);
+    const from = [...list].reverse().find((n) => n <= s.answered) || 0;
+    const bar = app.querySelector('#momentum');
+    bar.title = to ? `${s.answered} / ${to} challenges to the next milestone` : `${s.answered} challenges`;
+    bar.firstElementChild.style.width = to ? `${((s.answered - from) / (to - from)) * 100}%` : '100%';
+  }
+
+  function gymConceptRow(id, extra = '') {
+    const pct = Math.round(Gym.conceptProgress(gym.profile, id) * 100);
+    const state = Gym.conceptState(gym.profile, id);
+    return `<li><span class="grow">${esc(Gym.conceptOf(id).name)}</span>${extra}
+      <span class="gym-state state-${state}">${GYM_STATES[state]}</span>
+      <span class="mastery" title="Progress ${pct}%" aria-label="Progress ${pct}%"><span style="width:${pct}%"></span></span></li>`;
+  }
+
+  // The session summary opens over the feed, only when asked for.
+  function showGymRecap() {
+    if (!gym || app.querySelector('.recap')) return;
+    const s = gym.session, p = gym.profile;
+    const { strengths, improve, learned } = Gym.recap(s);
+    const acc = s.answered ? Math.round((s.correct / s.answered) * 100) : 0;
+    const life = Object.values(p.types).reduce((a, t) => ({ n: a.n + t.n, c: a.c + t.c }), { n: 0, c: 0 });
+    const score = (id) => { const t = s.concepts[id]; return t ? `<span class="muted small">${t.c}/${t.n}</span>` : ''; };
+    const types = Object.entries(Gym.TYPES).filter(([id]) => s.types[id])
+      .map(([id, t]) => `<li><span aria-hidden="true">${t.icon}</span><span class="grow">${t.name}</span><span class="muted small">${s.types[id].c}/${s.types[id].n}</span></li>`).join('');
+    app.querySelector('.scroll-view').insertAdjacentHTML('beforeend', `
+      <div class="recap" role="dialog" aria-modal="true" aria-labelledby="recap-title">
+        <div class="card recap-card">
+          <h2 id="recap-title">Session summary</h2>
+          ${s.answered ? `
+          <div class="recap-stats">
+            <div><b>${fmtNum(s.xp)}</b><span>XP earned</span></div>
+            <div><b>${acc}%</b><span>${s.correct}/${s.answered} correct</span></div>
+            <div><b>${s.bestStreak}</b><span>best streak</span></div>
+          </div>
+          ${learned.length ? `<h3>Learned this session</h3><ul class="topic-list">${learned.map((id) => gymConceptRow(id, score(id))).join('')}</ul>` : ''}
+          ${strengths.length ? `<h3>Going well</h3><ul class="topic-list">${strengths.filter((id) => !learned.includes(id)).slice(0, 4).map((id) => gymConceptRow(id, score(id))).join('')}</ul>` : ''}
+          ${improve.length ? `<h3>Needs practice</h3><ul class="topic-list">${improve.slice(0, 4).map((id) => gymConceptRow(id, score(id))).join('')}</ul>
+            <p class="muted small">These concepts come back with new examples until you get them right.</p>` : ''}
+          ${types ? `<h3>By activity</h3><ul class="topic-list">${types}</ul>` : ''}`
+          : '<p class="muted">Answer a few challenges and your summary shows up here.</p>'}
+          <details class="more"><summary>All concepts</summary>
+            <ul class="topic-list">${Gym.CONCEPTS.map((c) => gymConceptRow(c.id)).join('')}</ul>
+          </details>
+          <p class="muted small">All time: ${fmtNum(p.xp)} XP · ${life.n ? Math.round((life.c / life.n) * 100) : 0}% of ${life.n} correct · best streak ${p.bestStreak}</p>
+          <div class="result-actions">
+            <button class="btn primary" data-recap-close>Keep going</button>
+            ${s.answered ? '<button class="btn" data-recap-reset>Start a new session</button>' : ''}
+          </div>
+        </div>
+      </div>`);
+    const panel = app.querySelector('.recap');
+    panel.addEventListener('click', (e) => {
+      if (e.target === panel || e.target.closest('[data-recap-close]')) closeGymRecap();
+      else if (e.target.closest('[data-recap-reset]')) {
+        gym.session = Gym.newSession(gym.filter);
+        saveGym();
+        updateGymStats();
+        closeGymRecap();
+      }
+    });
+    panel.querySelector('[data-recap-close]').focus();
+  }
+
+  function closeGymRecap() {
+    app.querySelector('.recap')?.remove();
+    gym?.el.focus({ preventScroll: true });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (!gym || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (app.querySelector('.recap')) { if (e.key === 'Escape') { e.preventDefault(); closeGymRecap(); } return; }
+    // Enter/Space on a focused button, link or summary does its own thing.
+    if (e.target.closest && e.target.closest('button, a, summary') && (e.key === 'Enter' || e.key === ' ')) return;
+    const k = e.key.toUpperCase();
+    if (e.key === 'ArrowDown' || k === 'J') { e.preventDefault(); stepFeed(1, gym.current); return; }
+    if (e.key === 'ArrowUp' || k === 'K') { e.preventDefault(); stepFeed(-1, gym.current); return; }
+    const reel = gym.current;
+    if (!reel || reel.dataset.gym == null) return;
+    const it = gym.items[+reel.dataset.gym];
+    if (e.key === 'Enter') { if (it.chosen != null) { e.preventDefault(); stepFeed(1, reel); } return; }
+    if (k === 'H') { e.preventDefault(); showGymHint(reel); return; }
+    const idx = /^[1-9]$/.test(k) ? +k - 1 : Gym.isLineBug(it.item) ? -1 : LETTERS.indexOf(k);
+    if (idx >= 0 && idx < Gym.choiceCount(it.item)) { e.preventDefault(); answerGym(reel, idx); }
+  });
+
   // ---------- keyboard ----------
   document.addEventListener('keydown', (e) => {
     if (!run || run.locked || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1232,10 +1573,16 @@
     const m = /^#\/quiz\/([\w-]+(?:\/.+)?)/.exec(hash);
     const sr = /^#\/speedrun(?:\/(\w+)\/(\w+))?\/?$/.exec(hash);
     const ds = /^#\/scroll(?:\/(\w+))?\/?$/.exec(hash);
+    const gy = /^#\/gym(?:\/(\w+))?\/?$/.exec(hash);
     session = null; clearInterval(timerId); confirmSubmit = false;
     stopRun();
     stopFeed();
-    if (ds) {
+    stopGym();
+    if (gy) {
+      const id = [gy[1], store.get('gym-filter', 'all'), 'all'].find((x) => GYM_FILTERS.some((f) => f.id === x));
+      if (id !== gy[1]) return void location.replace('#/gym/' + id);
+      startGym(id);
+    } else if (ds) {
       const fallback = store.get('scroll-subject', 'all');
       const id = [ds[1], fallback, 'all'].find((x) => SCROLL_FEEDS.some((s) => s.id === x));
       if (id !== ds[1]) return void location.replace('#/scroll/' + id);

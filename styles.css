@@ -425,3 +425,53 @@ body.doomscroll { overflow: hidden; }
   .rail-btn svg { width: 40px; height: 40px; padding: 9px; }
   .reel-card { padding: 1.1rem; }
 }
+
+/* code gym (reuses the doomscroll feed, reels, options, feedback and recap styles) */
+.gym-entry { border-style: dashed; border-color: var(--success); background: linear-gradient(135deg, var(--success-soft), transparent 70%), var(--card); }
+.gym-entry h3 { display: inline-flex; align-items: center; gap: 0.4rem; }
+.gym-entry h3 svg { color: var(--success); flex: none; }
+.gym-meta { gap: 0.4rem 0.6rem; justify-content: flex-start; }
+.gym-meta .gym-level { margin-left: auto; }
+.gym-type { font-weight: 700; font-size: 0.85rem; display: inline-flex; gap: 0.35rem; align-items: center; }
+.type-output .gym-type { color: var(--primary); }
+.type-bug .gym-type { color: var(--danger); }
+.type-trace .gym-type { color: var(--success); }
+.gym-concept { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 600; padding: 0.15rem 0.3rem 0.15rem 0.6rem; border-radius: 999px; border: 1px solid var(--border); }
+.gym-concept b, .gym-state { font-size: 0.7rem; padding: 0 0.45rem; border-radius: 999px; background: var(--muted); color: var(--muted-foreground); }
+.state-review b, .gym-state.state-review { background: var(--danger-soft); color: var(--danger); }
+.state-solid b, .gym-state.state-solid { background: var(--primary-soft); color: var(--primary); }
+.state-mastered b, .gym-state.state-mastered { background: var(--success-soft); color: var(--success); }
+.gym-level { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--muted-foreground); }
+.gym-slot { margin: -0.25rem 0 0.75rem; padding: 0.4rem 0.7rem; border-radius: 8px; font-size: 0.85rem; background: var(--muted); }
+.gym-slot.slot-review { background: var(--success-soft); }
+.gym-slot.slot-stretch { background: hsl(38 90% 50% / 0.14); }
+.gym-instr { margin: -0.6rem 0 0; }
+/* code with line numbers: rows share the width of the longest line and scroll sideways together */
+.gym-code { display: grid; grid-template-columns: minmax(100%, max-content); padding: 0.7rem 0; font-family: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace; }
+.gym-code .code-line { display: flex; align-items: baseline; padding: 0 1rem 0 0; border: 0; border-left: 3px solid transparent; background: none; color: inherit; font: inherit; text-align: left; white-space: pre; }
+.gym-code code { background: none; padding: 0; border-radius: 0; font-size: inherit; }
+.gym-code .ln { flex: none; min-width: 2.6em; padding-right: 0.9rem; text-align: right; color: hsl(220 12% 52%); user-select: none; }
+.gym-code .code-line.target { background: hsl(45 90% 55% / 0.1); border-left-color: hsl(45 90% 55%); }
+.pick-lines .code-line { cursor: pointer; padding-top: 0.1rem; padding-bottom: 0.1rem; }
+.pick-lines .code-line:hover:not(:disabled) { background: hsl(250 85% 70% / 0.16); border-left-color: var(--primary); }
+.pick-lines .code-line:focus-visible { outline: 2px solid hsl(250 85% 75%); outline-offset: -2px; }
+.pick-lines .code-line:disabled { cursor: default; }
+.gym-code .code-line.correct { background: hsl(145 60% 45% / 0.22); border-left-color: hsl(145 60% 55%); }
+.gym-code .code-line.wrong { background: hsl(0 75% 55% / 0.22); border-left-color: hsl(0 80% 66%); }
+.gym-code .code-line.dim { opacity: 0.7; }
+.gym-diff { margin: 0.75rem 0 0; padding: 0.4rem 0; font-size: 0.85rem; }
+.gym-diff .del { background: hsl(0 75% 55% / 0.2); }
+.gym-diff .add { background: hsl(145 60% 45% / 0.2); }
+.option code.fix-opt { background: none; padding: 0; font-size: 0.85rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gym-hint { margin-top: 0.75rem; font-size: 0.9rem; }
+.gym-hint p { margin: 0; padding: 0.5rem 0.75rem; border-radius: 8px; background: var(--muted); }
+.gym-steps { margin: 0.5rem 0 0; padding-left: 1.3rem; }
+.gym-steps li { margin-top: 0.2rem; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem; }
+.feedback-title .small { font-weight: 500; }
+.recap-card .more { margin-top: 1.25rem; }
+.recap-card .more .topic-list { margin-top: 0.6rem; }
+@media (max-width: 640px) {
+  .gym-code { font-size: 0.8rem; }
+  .gym-code .ln { min-width: 2.2em; padding-right: 0.6rem; }
+  .gym-meta .gym-level { margin-left: 0; }
+}

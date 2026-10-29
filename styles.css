@@ -470,8 +470,83 @@ body.doomscroll { overflow: hidden; }
 .feedback-title .small { font-weight: 500; }
 .recap-card .more { margin-top: 1.25rem; }
 .recap-card .more .topic-list { margin-top: 0.6rem; }
+/* debugging: hints, retries, diagnosis, repair editor, tests, lessons, trace stepper */
+.type-repair .gym-type { color: var(--warn); }
+.drop-label { margin: -0.4rem 0 0.6rem; font-size: 0.8rem; font-weight: 700; color: var(--danger); display: flex; gap: 0.4rem; align-items: baseline; }
+.drop-label a { font-weight: 500; }
+.gym-slot.slot-boss { background: hsl(45 90% 50% / 0.16); font-weight: 600; }
+.gym-slot.slot-daily { background: var(--primary-soft); font-weight: 600; }
+.gym-tip { margin: 0 0 0.75rem; padding: 0.5rem 0.75rem; border-radius: 8px; font-size: 0.88rem; border-left: 3px solid var(--success); background: var(--success-soft); }
+.gym-code .code-line.found { background: hsl(145 60% 45% / 0.22); border-left-color: hsl(145 60% 55%); }
+.gym-code .code-line.hinted { background: hsl(45 90% 55% / 0.08); }
+.gym-code .code-line.focus { background: hsl(45 90% 55% / 0.16); border-left-color: hsl(45 90% 55%); }
+.gym-code .code-line.focus::after { content: "← this line"; margin-left: 1rem; font-size: 0.75em; color: hsl(45 90% 65%); font-family: system-ui, sans-serif; }
+.gym-code .code-line.now { background: hsl(250 85% 70% / 0.22); border-left-color: hsl(250 85% 75%); }
+.gym-hints { margin-top: 0.75rem; font-size: 0.9rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; }
+.hint-list { list-style: none; margin: 0; padding: 0; width: 100%; display: grid; gap: 0.4rem; }
+.hint-list:empty { display: none; }
+.hint-list li { padding: 0.45rem 0.75rem; border-radius: 8px; background: var(--muted); }
+.gym-try:empty { display: none; }
+.try-box { margin-top: 0.75rem; padding: 0.6rem 0.8rem; border-radius: 8px; border-left: 3px solid var(--warn); background: hsl(38 90% 50% / 0.1); font-size: 0.9rem; }
+.try-box strong { display: inline-flex; align-items: center; gap: 0.25rem; }
+.try-box svg { width: 14px; height: 14px; }
+.try-box .more { margin-top: 0.4rem; }
+.gym-dx:empty { display: none; }
+.gym-dx { margin-top: 1rem; }
+.dx-q { margin: 0 0 0.6rem; display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+.dx-q svg { width: 16px; height: 16px; color: var(--success); }
+/* repair editor: a transparent textarea over highlighted code, both in the same monospace grid */
+.editor { --ed-font: 0.88rem; --ed-line: 1.55; display: flex; padding: 0.7rem 0; margin-bottom: 0.4rem; overflow: hidden; font-family: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace; font-size: var(--ed-font); line-height: var(--ed-line); }
+.editor:focus-within { box-shadow: 0 0 0 2px var(--primary); }
+.editor-gutter { flex: none; display: flex; flex-direction: column; min-width: 2.6em; padding-right: 0.9rem; text-align: right; color: hsl(220 12% 52%); user-select: none; }
+.editor-body { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+.editor-hl, .editor-input { margin: 0; padding: 0 1rem 0 0; border: 0; font: inherit; line-height: inherit; letter-spacing: 0; tab-size: 2; white-space: pre; }
+.editor-hl { position: absolute; inset: 0 auto auto 0; pointer-events: none; color: var(--code-fg); background: none; }
+.editor-hl code { background: none; padding: 0; font-size: inherit; }
+.editor-input { position: relative; display: block; width: 100%; height: calc(var(--rows) * var(--ed-line) * var(--ed-font) + 14px); padding-bottom: 12px; resize: none; overflow-x: auto; overflow-y: hidden;
+  background: transparent; color: transparent; caret-color: hsl(220 30% 95%); outline: none; }
+.editor-input::selection { background: hsl(250 85% 70% / 0.35); color: transparent; }
+.editor-input:disabled { cursor: default; }
+.repair-tests h3 { margin: 0.75rem 0 0.4rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted-foreground); }
+.test-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; font-size: 0.85rem; }
+.test-list li { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.4rem 0.6rem; border-radius: 8px; border: 1px solid var(--border); background: var(--card); }
+.test-list li code { overflow-wrap: anywhere; }
+.test-body { min-width: 0; }
+.test-icon { flex: none; width: 1.1em; text-align: center; font-weight: 700; color: var(--muted-foreground); }
+.test-list li.pass { border-color: var(--success); background: var(--success-soft); }
+.test-list li.pass .test-icon { color: var(--success); }
+.test-list li.fail { border-color: var(--danger); background: var(--danger-soft); }
+.test-list li.fail .test-icon { color: var(--danger); }
+.test-list li.running { opacity: 0.7; }
+.test-got .got { display: block; margin-top: 0.2rem; color: var(--danger); font-size: 0.82rem; }
+.repair-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin-top: 0.85rem; }
+.repair-actions .btn { display: inline-flex; align-items: center; gap: 0.35rem; }
+.repair-actions .btn svg { width: 15px; height: 15px; }
+.console-out { margin: 0.4rem 0 0; font-size: 0.8rem; padding: 0.6rem 0.8rem; white-space: pre-wrap; }
+/* lessons */
+.gym-out { margin-top: 0.6rem; }
+.gym-out pre { margin: 0.2rem 0 0; padding: 0.55rem 0.9rem; font-size: 0.85rem; }
+.lesson-rule { padding: 0.45rem 0.7rem; border-radius: 8px; background: color-mix(in srgb, var(--card) 70%, transparent); font-size: 0.9rem; }
+.stepper { margin-top: 0.6rem; padding: 0.6rem 0.75rem; border-radius: 10px; border: 1px solid var(--border); background: var(--card); }
+.stepper-bar { display: flex; align-items: center; gap: 0.6rem; }
+.stepper-bar .chip { cursor: pointer; font: inherit; font-size: 0.8rem; color: inherit; min-width: 2.2rem; justify-content: center; }
+.stepper-bar .chip:disabled { opacity: 0.4; cursor: default; }
+.step p { margin: 0.5rem 0 0; }
+.step-line { font-size: 0.75rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: 999px; background: var(--primary-soft); color: var(--primary); }
+.vars { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.45rem; }
+.var { font-size: 0.8rem; padding: 0.1rem 0.45rem; border-radius: 6px; background: var(--muted); }
+.var code { background: none; padding: 0; }
+.feedback-title:focus { outline: none; }
+.feedback-title .mult + .mult { margin-left: -0.15rem; }
+@media (pointer: coarse) {
+  .pick-lines .code-line { min-height: 2.25em; align-items: center; }
+}
 @media (max-width: 640px) {
   .gym-code { font-size: 0.8rem; }
   .gym-code .ln { min-width: 2.2em; padding-right: 0.6rem; }
   .gym-meta .gym-level { margin-left: 0; }
+  /* 16px keeps iOS from zooming into the editor. */
+  .editor { --ed-font: 16px; --ed-line: 1.45; }
+  .editor-gutter { min-width: 2em; padding-right: 0.5rem; }
+  .gym-code .code-line.focus::after { content: "←"; }
 }

@@ -2,6 +2,9 @@
 // tests/gym.test.js runs every snippet in Node and checks the output matches the answer (and no other option).
 CodeGym.add([
   { id: 'out-copy-primitive', type: 'output', concept: 'variables', d: 1,
+    at: 1,
+    hint: 'Assigning a number copies the value. It does not link the two variables.',
+    rule: 'Primitives are copied on assignment, so changing one variable never changes another.',
     q: 'What is printed?',
     c: 'let x = 5;\nlet y = x;\nx = 10;\nconsole.log(y);',
     o: ['10', '5', 'undefined', 'ReferenceError'], a: 1,
@@ -10,6 +13,8 @@ CodeGym.add([
     steps: ['x = 5', 'y = x copies the number: y = 5', 'x = 10 changes only x', 'print y → 5'] },
 
   { id: 'out-typeof', type: 'output', concept: 'variables', d: 1,
+    at: 3,
+    rule: 'Check for null with `=== null` and for arrays with `Array.isArray`. `typeof` cannot tell either apart from an object.',
     q: 'What is printed?',
     c: 'let value;\nconsole.log(typeof value);\nvalue = null;\nconsole.log(typeof value);\nvalue = [];\nconsole.log(typeof value);',
     o: ['undefined null array', 'undefined object object', 'undefined object array', 'null object object'], a: 1,
@@ -18,6 +23,9 @@ CodeGym.add([
     hint: '`typeof` only ever returns a handful of strings: "undefined", "object", "number", "string", "boolean", "function", "bigint", "symbol".' },
 
   { id: 'out-remainder-power', type: 'output', concept: 'operators', d: 1,
+    at: 0,
+    hint: '`%` gives what is left over after dividing, and `**` multiplies a number by itself.',
+    rule: 'Know your operators: `%` is the remainder, `**` a power, `/` a true division.',
     q: 'What is printed?',
     c: 'console.log(7 % 3, 2 ** 3);',
     o: ['1 8', '2 6', '1 6', '2.33 8'], a: 0,
@@ -25,6 +33,9 @@ CodeGym.add([
     w: ['', '`7 % 3` is the remainder (1), not the quotient (2), and `2 ** 3` is a power, not a product.', '`**` raises to a power: 2³ = 8.', '`%` gives the remainder, not the division result.'] },
 
   { id: 'out-float-sum', type: 'output', concept: 'operators', d: 1,
+    at: 0,
+    hint: 'Numbers are stored in binary, and 0.1 has no exact binary form.',
+    rule: 'Never compare floating-point results with `===`. Compare with a small tolerance, or work in whole units such as cents.',
     q: 'What is printed?',
     c: 'console.log(0.1 + 0.2 === 0.3);',
     o: ['true', 'false', 'undefined', 'NaN'], a: 1,
@@ -32,6 +43,9 @@ CodeGym.add([
     w: ['Mathematically yes, but the stored values are tiny bit off.', '', '`===` always returns a boolean.', 'Adding two numbers gives a number, and comparing gives a boolean.'] },
 
   { id: 'out-plus-minus-strings', type: 'output', concept: 'coercion', d: 1,
+    at: 0,
+    hint: '`+` has two jobs, adding and joining strings. `-` has only one.',
+    rule: 'Convert strings to numbers before doing maths: `+` with any string joins text.',
     q: 'What is printed?',
     c: 'console.log("5" + 3);\nconsole.log("5" - 3);',
     o: ['53 2', '8 2', '53 53', '8 8'], a: 0,
@@ -40,6 +54,9 @@ CodeGym.add([
     steps: ['"5" + 3 → one side is a string → "5" + "3" → "53"', '"5" - 3 → minus is numeric only → 5 - 3 → 2'] },
 
   { id: 'out-loose-strict', type: 'output', concept: 'coercion', d: 2,
+    at: 2,
+    hint: '`==` converts types before comparing and `===` never does. `null` and `undefined` are a special pair.',
+    rule: 'Use `===` by default. It never converts types behind your back.',
     q: 'What is printed?',
     c: 'console.log(1 == "1");\nconsole.log(1 === "1");\nconsole.log(null == undefined);\nconsole.log(null === undefined);',
     o: ['true false true false', 'true false false false', 'true true true false', 'false false true false'], a: 0,
@@ -47,6 +64,9 @@ CodeGym.add([
     w: ['', '`null == undefined` is true by a special rule in the spec.', '`===` never converts types, so 1 and "1" differ.', '`==` converts "1" to the number 1.'] },
 
   { id: 'out-array-concat-coercion', type: 'output', concept: 'coercion', d: 3,
+    at: 0,
+    hint: '`+` turns arrays and objects into strings first: `[1, 2]` becomes "1,2".',
+    rule: '`+` converts arrays and objects to strings. Build the value you want explicitly instead.',
     q: 'What is printed?',
     c: 'console.log([1, 2] + [3]);\nconsole.log(typeof ([] + {}));\nconsole.log(+[]);',
     o: ['1,23 string 0', '[1,2,3] object 0', '1,23 object NaN', '6 string 0'], a: 0,
@@ -55,6 +75,9 @@ CodeGym.add([
     steps: ['[1, 2] → "1,2" and [3] → "3"', '"1,2" + "3" → "1,23"', '[] → "" and {} → "[object Object]", joined → a string', '+[] → +"" → 0'] },
 
   { id: 'out-else-if-chain', type: 'output', concept: 'conditionals', d: 1,
+    at: 2,
+    hint: 'The chain stops at the first condition that is true.',
+    rule: 'In an if / else if chain, order matters: only the first true branch runs.',
     q: 'What is printed?',
     c: 'const score = 75;\nif (score > 90) console.log("A");\nelse if (score > 70) console.log("B");\nelse if (score > 50) console.log("C");\nelse console.log("F");',
     o: ['A', 'B', 'B C', 'C'], a: 1,
@@ -62,6 +85,8 @@ CodeGym.add([
     w: ['75 is not greater than 90.', '', 'Once one branch runs, the remaining `else if`s are skipped.', '`score > 70` is checked first and is already true.'] },
 
   { id: 'out-truthy-values', type: 'output', concept: 'conditionals', d: 2,
+    at: 2,
+    rule: 'Only `false`, `0`, `""`, `null`, `undefined` and `NaN` are falsy. Empty arrays, empty objects and "0" are truthy.',
     q: 'Which values pass the `if`?',
     c: 'const values = [0, "0", "", [], null];\nfor (const v of values) {\n  if (v) console.log(JSON.stringify(v));\n}',
     o: ['"0" []', '"0"', '0 "0" []', 'Nothing is printed'], a: 0,
@@ -70,6 +95,9 @@ CodeGym.add([
     hint: 'Only the empty string is a falsy string. What about objects?' },
 
   { id: 'out-sum-loop', type: 'output', concept: 'loops', d: 1,
+    at: 1,
+    hint: 'Note the `<=`: the loop includes 4.',
+    rule: 'Read loop bounds carefully: `<=` includes the end value and `<` stops before it.',
     q: 'What is printed?',
     c: 'let total = 0;\nfor (let i = 1; i <= 4; i++) {\n  total += i;\n}\nconsole.log(total);',
     o: ['6', '10', '15', '4'], a: 1,
@@ -78,6 +106,9 @@ CodeGym.add([
     steps: ['i = 1 → total = 1', 'i = 2 → total = 3', 'i = 3 → total = 6', 'i = 4 → total = 10', 'i = 5 → 5 <= 4 is false, loop ends'] },
 
   { id: 'out-continue-break', type: 'output', concept: 'loops', d: 2,
+    at: 1,
+    hint: '`continue` skips the rest of one iteration. `break` leaves the loop entirely.',
+    rule: '`continue` jumps to the next iteration and `break` ends the loop.',
     q: 'What is printed?',
     c: 'for (let i = 0; i < 6; i++) {\n  if (i === 1) continue;\n  if (i === 4) break;\n  console.log(i);\n}',
     o: ['0 2 3', '0 2 3 5', '0 1 2 3', '2 3'], a: 0,
@@ -86,6 +117,9 @@ CodeGym.add([
     steps: ['i = 0 → print 0', 'i = 1 → continue (skip)', 'i = 2 → print 2', 'i = 3 → print 3', 'i = 4 → break'] },
 
   { id: 'out-string-immutable', type: 'output', concept: 'strings', d: 1,
+    at: 1,
+    hint: 'String methods return a new string and never change the original. `slice(1, 3)` stops before index 3.',
+    rule: 'Strings are immutable: keep the result of a string method, because the original is unchanged.',
     q: 'What is printed?',
     c: 'const s = "hello";\nconst t = s.toUpperCase();\nconsole.log(s, t, s.slice(1, 3));',
     o: ['HELLO HELLO el', 'hello HELLO el', 'hello HELLO ell', 'hello HELLO he'], a: 1,
@@ -93,6 +127,9 @@ CodeGym.add([
     w: ['`toUpperCase` returns a new string; `s` stays "hello".', '', 'The end index of `slice` is not included.', 'Index 1 is the second character ("e").'] },
 
   { id: 'out-missing-return', type: 'output', concept: 'functions', d: 1,
+    at: 1,
+    hint: 'The function computes a value, but does it hand it back?',
+    rule: 'A function returns `undefined` unless it reaches a `return` with a value.',
     q: 'What is printed?',
     c: 'function double(n) {\n  n * 2;\n}\nconsole.log(double(4));',
     o: ['8', 'undefined', '4', 'null'], a: 1,
@@ -100,6 +137,9 @@ CodeGym.add([
     w: ['The value is computed but thrown away. It needs `return n * 2;`.', '', 'The function does not return its argument either.', 'Functions with no `return` give `undefined`, not `null`.'] },
 
   { id: 'out-default-params', type: 'output', concept: 'functions', d: 2,
+    at: 0,
+    hint: 'A default value is used only when the argument is `undefined`.',
+    rule: 'Default parameters replace `undefined` only. `null` is a real value and is kept.',
     q: 'What is printed?',
     c: 'function greet(name = "friend", greeting) {\n  return `${greeting}, ${name}!`;\n}\nconsole.log(greet(undefined, "Hi"));\nconsole.log(greet(null, "Hey"));',
     o: ['Hi, friend! Hey, friend!', 'Hi, friend! Hey, null!', 'Hi, undefined! Hey, null!', 'undefined, friend! Hey, friend!'], a: 1,
@@ -107,6 +147,8 @@ CodeGym.add([
     w: ['Defaults do not apply to `null`.', '', 'Passing `undefined` triggers the default.', '`greeting` is "Hi" in the first call.'] },
 
   { id: 'out-sort-default', type: 'output', concept: 'arrays', d: 2,
+    at: 1,
+    rule: 'Always pass a compare function to sort numbers: `nums.sort((a, b) => a - b)`.',
     q: 'What is printed?',
     c: 'const nums = [10, 1, 5, 100];\nnums.sort();\nconsole.log(nums);',
     o: ['[1, 5, 10, 100]', '[1, 10, 100, 5]', '[100, 10, 5, 1]', '[10, 1, 5, 100]'], a: 1,
@@ -115,6 +157,9 @@ CodeGym.add([
     hint: 'How would "10", "1", "5" and "100" be ordered in a dictionary?' },
 
   { id: 'out-object-reference', type: 'output', concept: 'objects', d: 1,
+    at: 1,
+    hint: '`const b = a` does not copy the object.',
+    rule: 'Assigning an object shares it, so changes made through one name show up through the other.',
     q: 'What is printed?',
     c: 'const a = { count: 1 };\nconst b = a;\nb.count++;\nconsole.log(a.count);',
     o: ['1', '2', 'undefined', 'TypeError'], a: 1,
@@ -122,6 +167,9 @@ CodeGym.add([
     w: ['`b` is the same object as `a`, not a copy.', '', '`count` exists and was incremented.', '`const` prevents `a = ...`, not changing a property.'] },
 
   { id: 'out-spread-shallow', type: 'output', concept: 'objects', d: 2,
+    at: 3,
+    hint: 'Spread copies the top level only. The `tags` array inside is shared.',
+    rule: 'Spread makes a shallow copy: nested arrays and objects are still shared. Use `structuredClone` for a deep copy.',
     q: 'What is printed?',
     c: 'const user = { name: "Ada", tags: ["admin"] };\nconst copy = { ...user };\ncopy.name = "Bob";\ncopy.tags.push("dev");\nconsole.log(user.name, user.tags.length);',
     o: ['Ada 1', 'Ada 2', 'Bob 2', 'Bob 1'], a: 1,
@@ -129,6 +177,9 @@ CodeGym.add([
     w: ['The `tags` array is shared between both objects.', '', '`copy.name = ...` only changes the copy.', '`copy.name = ...` only changes the copy, and the array is shared.'] },
 
   { id: 'out-filter-map', type: 'output', concept: 'array-methods', d: 1,
+    at: 1,
+    hint: 'Run the steps in order: `filter` keeps some numbers, then `map` changes each one.',
+    rule: 'Chained array methods run left to right, each on the result of the previous one.',
     q: 'What is printed?',
     c: 'const result = [1, 2, 3, 4]\n  .filter((n) => n % 2 === 0)\n  .map((n) => n * 10);\nconsole.log(result);',
     o: ['[20, 40]', '[10, 30]', '[2, 4]', '[10, 20, 30, 40]'], a: 0,
@@ -136,6 +187,9 @@ CodeGym.add([
     w: ['', 'Those come from the odd numbers. `n % 2 === 0` keeps even ones.', 'The `map` step still runs after the filter.', 'The filter removes the odd numbers first.'] },
 
   { id: 'out-reduce-lengths', type: 'output', concept: 'array-methods', d: 2,
+    at: 1,
+    hint: 'The accumulator starts at 0 and each step adds one word\'s length.',
+    rule: '`reduce` carries one value (the accumulator) through the array. Give it a starting value.',
     q: 'What is printed?',
     c: 'const words = ["a", "bb", "ccc"];\nconst total = words.reduce((sum, w) => sum + w.length, 0);\nconsole.log(total);',
     o: ['6', '3', 'abbccc', 'NaN'], a: 0,
@@ -144,6 +198,8 @@ CodeGym.add([
     steps: ['sum = 0 (initial value)', '"a" → 0 + 1 = 1', '"bb" → 1 + 2 = 3', '"ccc" → 3 + 3 = 6'] },
 
   { id: 'out-map-parseint', type: 'output', concept: 'array-methods', d: 3,
+    at: 0,
+    rule: 'Don\'t pass functions with optional parameters straight to `map`. Wrap them: `map((s) => parseInt(s, 10))`.',
     q: 'What is printed?',
     c: 'console.log(["1", "2", "3"].map(parseInt));',
     o: ['[1, 2, 3]', '[1, NaN, NaN]', '[NaN, NaN, NaN]', '["1", "2", "3"]'], a: 1,
@@ -153,6 +209,9 @@ CodeGym.add([
     hint: 'What arguments does `map` pass to its callback, and what does `parseInt` do with a second argument?' },
 
   { id: 'out-var-hoisting', type: 'output', concept: 'scope', d: 2,
+    at: 0,
+    hint: '`var` declarations move to the top of their scope, but their values stay where they are.',
+    rule: '`var` is hoisted and starts as `undefined`. Prefer `let` and `const`, which fail loudly if used too early.',
     q: 'What is printed?',
     c: 'console.log(a);\nvar a = 5;\nconsole.log(a);',
     o: ['undefined 5', 'ReferenceError', '5 5', 'null 5'], a: 0,
@@ -160,6 +219,8 @@ CodeGym.add([
     w: ['', 'That happens with `let`/`const`. `var` is hoisted and initialised to undefined.', 'The assignment `= 5` is not hoisted.', 'Hoisted `var`s start as `undefined`, not `null`.'] },
 
   { id: 'out-tdz-shadow', type: 'output', concept: 'scope', d: 2,
+    at: 2,
+    rule: 'A `let` inside a block hides the outer name for the whole block, even before its line runs.',
     q: 'What happens?',
     c: 'let x = 1;\n{\n  console.log(x);\n  let x = 2;\n}',
     o: ['1', '2', 'undefined', 'ReferenceError'], a: 3,
@@ -168,6 +229,9 @@ CodeGym.add([
     hint: 'Where does the scope of the inner `let x` start: at its line, or at the `{`?' },
 
   { id: 'out-counter-closure', type: 'output', concept: 'closures', d: 2,
+    at: 5,
+    hint: 'Each call to `makeCounter` creates its own `count`.',
+    rule: 'Every call to a function creates new local variables, so each closure has its own private state.',
     q: 'What is printed?',
     c: 'function makeCounter() {\n  let count = 0;\n  return () => ++count;\n}\nconst c1 = makeCounter();\nconst c2 = makeCounter();\nc1();\nc1();\nconsole.log(c1(), c2());',
     o: ['3 1', '3 3', '1 1', '2 1'], a: 0,
@@ -175,6 +239,9 @@ CodeGym.add([
     w: ['', '`c1` and `c2` each have their own `count`.', '`count` survives between calls because the closure keeps it alive.', '`++count` increments before returning, and this is the third call of `c1`.'] },
 
   { id: 'out-var-timeout-loop', type: 'output', concept: 'closures', d: 3,
+    at: 0,
+    hint: 'The callbacks run after the loop finishes. How many `i` variables are there with `var`?',
+    rule: 'Use `let` in loops that create callbacks: each iteration then gets its own variable.',
     q: 'What is printed?',
     c: 'for (var i = 0; i < 3; i++) {\n  setTimeout(() => console.log(i), 0);\n}',
     o: ['0 1 2', '3 3 3', '2 2 2', 'undefined undefined undefined'], a: 1,
@@ -183,6 +250,9 @@ CodeGym.add([
     steps: ['The loop runs to the end, scheduling 3 callbacks', 'After the loop, the single shared i is 3', 'Each callback reads that same i → 3, 3, 3'] },
 
   { id: 'out-await-null', type: 'output', concept: 'async', d: 2,
+    at: 2,
+    hint: '`await` pauses only `run` and hands control back to the code that called it.',
+    rule: '`await` pauses the async function, not the whole program. The caller keeps running.',
     q: 'What is printed?',
     c: 'async function run() {\n  console.log("A");\n  await null;\n  console.log("B");\n}\nrun();\nconsole.log("C");',
     o: ['A B C', 'A C B', 'C A B', 'A C'], a: 1,
@@ -190,6 +260,8 @@ CodeGym.add([
     w: ['`await` always pauses, even for a value that is not a promise.', '', 'The function body starts running immediately when `run()` is called.', 'The function resumes after the synchronous code finishes.'] },
 
   { id: 'out-microtask-order', type: 'output', concept: 'async', d: 3,
+    at: 0,
+    rule: 'Synchronous code runs first, then all microtasks (promise callbacks), then timers.',
     q: 'What is printed?',
     c: 'setTimeout(() => console.log("timeout"), 0);\nPromise.resolve()\n  .then(() => console.log("then 1"))\n  .then(() => console.log("then 2"));\nqueueMicrotask(() => console.log("micro"));\nconsole.log("sync");',
     o: ['sync then 1 then 2 micro timeout', 'sync then 1 micro then 2 timeout', 'sync micro then 1 then 2 timeout', 'sync timeout then 1 micro then 2'], a: 1,
@@ -197,4 +269,22 @@ CodeGym.add([
     w: ['"then 2" is not queued until "then 1" has run, and "micro" was queued before that.', '', '"then 1" was queued before "micro".', 'Timers run after all microtasks.'],
     steps: ['Script: queue timer, queue "then 1", queue "micro", print "sync"', 'Microtask "then 1" runs → its promise resolves → queue "then 2"', 'Microtask "micro" runs', 'Microtask "then 2" runs', 'Microtask queue empty → timer task runs: "timeout"'],
     hint: 'A `.then` callback is only queued once the promise before it has settled.' },
+
+  { id: 'out-render-stale', type: 'output', concept: 'dom', d: 1,
+    q: '`view` stands in for an element on the page. What is printed?',
+    c: 'const state = { items: ["a"] };\nconst view = { text: "" };\nfunction render() {\n  view.text = state.items.join(", ");\n}\nrender();\nstate.items.push("b");\nconsole.log(view.text);',
+    o: ['a', 'a, b', '(an empty line)', 'undefined'], a: 0, at: 6,
+    hint: 'The view is only updated inside `render`. Is `render` called after the push?',
+    rule: 'Changing state does not update the page by itself: re-render (or use a framework that does) after every change.',
+    e: '`render` copied the text once, when the state held only "a". Pushing "b" changes the state, but nothing calls `render` again, so the view still shows "a". This is the classic "state changed but the screen didn\'t" bug.',
+    w: ['', 'That needs `render()` to run again after the push.', '`render()` ran once and set the text to "a".', '`join` always returns a string.'] },
+
+  { id: 'out-try-timeout', type: 'output', concept: 'errors', d: 3, also: ['async'],
+    q: 'What happens?',
+    c: 'try {\n  setTimeout(() => {\n    throw new Error("boom");\n  }, 0);\n  console.log("scheduled");\n} catch (e) {\n  console.log("caught");\n}',
+    o: ['scheduled', 'caught', 'scheduled caught', 'scheduled, then an uncaught Error: boom'], a: 3, out: 'scheduled Error', at: 2,
+    hint: 'When does the callback run, and is the `try` block still running then?',
+    rule: '`try`/`catch` only catches errors thrown while its block is running. Handle errors inside callbacks, or use `await` in a `try`.',
+    e: '`setTimeout` only schedules the callback. The `try` block finishes (printing "scheduled") long before the callback runs, so when it throws, no `try` is active and the error is uncaught.',
+    w: ['That misses the error: the callback still runs later and throws.', 'The `try` block has already finished when the callback throws.', 'The `catch` block is not active any more when the error is thrown.', ''] },
 ]);

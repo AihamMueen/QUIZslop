@@ -199,8 +199,8 @@
         </a>
         <a class="card quiz-card gym-entry" href="#/gym">
           <div class="quiz-card-top"><h3>${icons.code} Code Gym</h3></div>
-          <p class="muted">Bite-size JavaScript puzzles: predict the output, find the bug, trace the code. Adapts to what you know.</p>
-          <div class="meta"><span>${icons.list}${window.CodeGym.challenges.length} challenges</span><span>${icons.clock}10–30s each</span></div>
+          <p class="muted">Learn to debug JavaScript: hunt bugs line by line, predict output, trace execution, and fix code against real tests. Adapts to what you know.</p>
+          <div class="meta"><span>${icons.list}${window.CodeGym.challenges.length} challenges</span>${gymDailyDue() ? '<span class="pill new">📅 Daily debug ready</span>' : ''}</div>
         </a>
       </div>
       ${groups.map((g) => `
@@ -781,7 +781,7 @@
 
   let feed = null;
   function stopFeed() {
-    if (feed) { feed.observer.disconnect(); cancelAutoScroll(); }
+    if (feed) { feed.observer.disconnect(); cancelAutoScroll(); if (feed.gym) feed.gym.alive = false; }
     feed = null;
     document.body.classList.remove('doomscroll');
   }
@@ -833,8 +833,13 @@
         for (const e of list) if (e.isIntersecting) onReelVisible(e.target);
       }, { root: el, rootMargin: '-50% 0px -50% 0px' }),
     };
+    // Debug drops: Code Gym challenges mixed into the JavaScript feeds (see the code gym section).
+    feed.gym = DEBUG_DROP_FEEDS.includes(feedId) ? newGymCtx(el, 'all', true, feed.observer) : null;
+    feed.reels = 0;
     el.addEventListener('click', onFeedClick);
     el.addEventListener('dblclick', onFeedDblClick);
+    el.addEventListener('input', (e) => { if (feed?.gym) onGymInput(feed.gym, e); });
+    el.addEventListener('keydown', (e) => { if (feed?.gym) onEditorKey(feed.gym, e); });
     // Opening "Explain more" means you're reading: don't scroll away.
     el.addEventListener('toggle', (e) => { if (e.target.open) cancelAutoScroll(); }, true);
     app.querySelector('#feed-recap').addEventListener('click', showRecap);
@@ -866,6 +871,10 @@
 
   function appendReel() {
     const f = feed;
+    if (f.gym && ++f.reels % DEBUG_DROP_EVERY === 0 && appendGymCard(f.gym)) {
+      f.el.lastElementChild.dataset.watched = '';
+      return;
+    }
     const pick = Adaptive.pickNext(f.pool, f.profile, f.session, f.rng, f.strict ? { exclude: f.shownAll, strict: true } : {});
     if (!pick) {
       f.done = true;
@@ -941,6 +950,7 @@
   function onReelVisible(reel) {
     if (reel !== feed.current) cancelAutoScroll();
     feed.current = reel;
+    if (reel.dataset.gym != null && feed.gym) onGymVisible(feed.gym, reel);
     const it = reel.dataset.reel != null && feed.items[+reel.dataset.reel];
     if (it && !it.shownAt) it.shownAt = performance.now();
     ensureAhead();
@@ -949,6 +959,7 @@
   function onFeedClick(e) {
     if (e.target.closest('[data-recap]')) return showRecap();
     const reel = e.target.closest('.reel');
+    if (reel && reel.dataset.gym != null && feed.gym) return onGymClick(feed.gym, e);
     if (!reel || reel.dataset.reel == null) return;
     const opt = e.target.closest('[data-feed-opt]');
     const clue = e.target.closest('[data-clue]');
@@ -1153,7 +1164,8 @@
           </div>
           ${strengths.length ? `<h3>Going well</h3><ul class="topic-list">${strengths.slice(0, 4).map(topicRow).join('')}</ul>` : ''}
           ${improve.length ? `<h3>Worth another look</h3><ul class="topic-list">${improve.slice(0, 4).map(topicRow).join('')}</ul>` : ''}
-          ${queued ? `<p class="muted small">${queued} missed question${queued === 1 ? '' : 's'} queued. Their topics come back as knowledge checks.</p>` : ''}`
+          ${queued ? `<p class="muted small">${queued} missed question${queued === 1 ? '' : 's'} queued. Their topics come back as knowledge checks.</p>` : ''}
+          ${feed.gym && feed.gym.session.answered ? `<p class="muted small">🐞 Debug drops: ${feed.gym.session.correct}/${feed.gym.session.answered} solved, +${fmtNum(feed.gym.session.xp)} Code Gym XP. <a href="#/gym">Open Code Gym</a></p>` : ''}`
           : '<p class="muted">Answer a few questions and your recap shows up here.</p>'}
           <div class="result-actions">
             <button class="btn primary" data-recap-close>Keep scrolling</button>
@@ -1186,13 +1198,17 @@
   }
 
   document.addEventListener('keydown', (e) => {
-    if (!feed || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!feed || e.ctrlKey || e.metaKey || e.altKey || isTyping(e)) return;
     if (app.querySelector('.recap')) { if (e.key === 'Escape') { e.preventDefault(); closeRecap(); } return; }
     if (e.target.closest && e.target.closest('summary, .link-btn') && (e.key === 'Enter' || e.key === ' ')) return;
     const k = e.key.toUpperCase();
     if (e.key === 'ArrowDown' || k === 'J') { e.preventDefault(); stepFeed(1); return; }
     if (e.key === 'ArrowUp' || k === 'K') { e.preventDefault(); stepFeed(-1); return; }
     const reel = feed.current;
+    if (reel && reel.dataset.gym != null && feed.gym) {
+      if (!(e.target.closest && e.target.closest('button, a') && (e.key === 'Enter' || e.key === ' '))) gymKey(feed.gym, reel, e);
+      return;
+    }
     if (!reel || reel.dataset.reel == null) return;
     if (k === 'S') { e.preventDefault(); toggleSave(reel); return; }
     const it = feed.items[+reel.dataset.reel];
@@ -1201,35 +1217,58 @@
   });
 
   // ---------- code gym ----------
-  // A snap-scrolling feed of short JavaScript puzzles: predict the output, find the bug, trace the code.
+  // A snap-scrolling feed of short JavaScript debugging challenges: predict the output, find the bug (tap the line,
+  // then diagnose it), trace the code, and fix the code (edit it and run tests in js/sandbox.js).
   // js/gym.js holds the challenges and decides what comes next (per-concept spacing and difficulty); this section
-  // renders the cards. Only GYM_AHEAD card is queued, and it is re-picked after each answer if it hasn't been seen,
-  // so the very next card already reflects that answer.
+  // renders the cards. Every function takes a context `g`, so the same cards run on the Code Gym page and as
+  // "debug drops" inside the JavaScript doomscroll feed. Both share the `popquiz-gym` profile.
+  // On the Code Gym page only GYM_AHEAD card is queued, and it is re-picked after each answer if it hasn't been
+  // seen, so the very next card already reflects that answer.
   const Gym = window.CodeGym;
   const GYM_AHEAD = 1;
+  const DEBUG_DROP_EVERY = 5; // in the JavaScript and "all" doomscroll feeds, every 5th reel is a Code Gym challenge
+  const DEBUG_DROP_FEEDS = ['javascript', 'all'];
   const GYM_FILTERS = [{ id: 'all', name: 'Mixed', icon: '★' }, ...Object.entries(Gym.TYPES).map(([id, t]) => ({ id, name: t.short, icon: t.icon }))];
   const GYM_STATES = { new: 'New', review: 'Review', learning: 'Learning', solid: 'Solid', mastered: 'Mastered' };
   const GYM_SLOTS = {
     review: { icon: '🎯', text: 'Review: you missed this concept earlier. Here is a different example.' },
     stretch: { icon: '💪', text: 'Stretch: a step up from your usual level.' },
     fresh: { icon: '✨', text: 'New concept' },
+    boss: { icon: '👑', text: `Boss challenge: a tough one that mixes concepts you have practised. ×${Gym.TUNING.BOSS_FACTOR} XP.` },
+    daily: { icon: '📅', text: `Daily debug: today's challenge, the same for everyone. +${Gym.TUNING.DAILY_XP} XP for solving it.` },
+  };
+  const HINT_LABELS = ['Concept', 'Where to look', 'Key insight'];
+  const INSTRUCTIONS = {
+    line: 'Tap the line with the bug, or press its number.',
+    repair: 'Edit the code, then run the tests. Any fix that passes them all counts.',
   };
 
   let gym = null;
+  function newGymCtx(el, filter, inFeed, observer) {
+    return {
+      el, filter, inFeed, observer, alive: true,
+      pool: Gym.buildPool(),
+      rng: Adaptive.mulberry32((Date.now() ^ (Math.random() * 2 ** 32)) >>> 0),
+      profile: Gym.sanitizeProfile(store.get('gym', null)),
+      session: Gym.newSession(filter),
+      items: [], current: null,
+    };
+  }
   function stopGym() {
-    if (gym) gym.observer.disconnect();
+    if (gym) { gym.alive = false; gym.observer.disconnect(); }
     gym = null;
   }
-  const saveGym = () => {
-    store.set('gym', gym.profile);
-    store.set('gym-session', { ...gym.session, at: Date.now() });
+  const saveGym = (g) => {
+    store.set('gym', g.profile);
+    if (!g.inFeed) store.set('gym-session', { ...g.session, at: Date.now() });
   };
   const gymMatches = (ch, filter) => filter === 'all' || ch.type === filter;
+  const gymItem = (g, reel) => g.items[+reel.dataset.gym];
+  const gymDailyDue = () => { const p = Gym.sanitizeProfile(store.get('gym', null)); return p.daily !== Gym.today(); };
+  const isTyping = (e) => !!(e.target && e.target.closest && e.target.closest('textarea, input, select, [contenteditable]'));
 
   function startGym(filter) {
     store.set('gym-filter', filter);
-    const pool = Gym.buildPool();
-    const session = Gym.sanitizeSession(store.get('gym-session', null), filter, Date.now());
     document.body.classList.add('doomscroll');
     setTopbarHeight();
     app.innerHTML = `
@@ -1247,46 +1286,55 @@
         <div class="feed" id="feed" tabindex="-1"></div>
       </div>`;
     const el = app.querySelector('#feed');
-    gym = {
-      filter, el, pool,
-      rng: Adaptive.mulberry32((Date.now() ^ (Math.random() * 2 ** 32)) >>> 0),
-      profile: Gym.sanitizeProfile(store.get('gym', null)),
-      session: session || Gym.newSession(filter),
-      items: [], current: null,
-      observer: new IntersectionObserver((list) => {
-        for (const e of list) if (e.isIntersecting) onGymVisible(e.target);
-      }, { root: el, rootMargin: '-50% 0px -50% 0px' }),
-    };
-    el.addEventListener('click', onGymClick);
+    const observer = new IntersectionObserver((list) => {
+      for (const e of list) if (e.isIntersecting && gym) onGymVisible(gym, e.target);
+    }, { root: el, rootMargin: '-50% 0px -50% 0px' });
+    gym = newGymCtx(el, filter, false, observer);
+    gym.session = Gym.sanitizeSession(store.get('gym-session', null), filter, Date.now()) || gym.session;
+    el.addEventListener('click', (e) => onGymClick(gym, e));
+    el.addEventListener('input', (e) => onGymInput(gym, e));
+    el.addEventListener('keydown', (e) => onEditorKey(gym, e));
     app.querySelector('#gym-recap').addEventListener('click', showGymRecap);
-    if (!pool.some((ch) => gymMatches(ch, filter))) {
+    if (!gym.pool.some((ch) => gymMatches(ch, filter))) {
       el.innerHTML = `<section class="reel"><div class="card reel-card break-card">
         <div class="big">${icons.list}</div><h2>No challenges here yet</h2>
         <p class="muted">There are no challenges of this type in the bank.</p>
         <a class="btn primary" href="#/gym/all">Try the mixed feed</a></div></section>`;
     } else {
-      ensureGymAhead();
+      ensureGymAhead(gym);
     }
     updateGymStats();
     el.focus({ preventScroll: true });
   }
 
-  function ensureGymAhead() {
-    const g = gym;
+  function ensureGymAhead(g) {
     const cur = g.current ? [...g.el.children].indexOf(g.current) : 0;
-    while (g.el.children.length - 1 - cur < GYM_AHEAD) if (!appendGymCard()) break;
+    while (g.el.children.length - 1 - cur < GYM_AHEAD) if (!appendGymCard(g)) break;
   }
 
-  function appendGymCard() {
-    const pick = Gym.pickNext(gym.pool, gym.profile, gym.session, gym.rng, { type: gym.filter });
+  // Adds one challenge card to the end of g.el. The Code Gym page opens with today's daily challenge if it is due.
+  function appendGymCard(g) {
+    const daily = !g.inFeed && !g.items.length ? Gym.dailyPick(g.pool, g.profile, g.session, Gym.today(), { type: g.filter }) : null;
+    const pick = daily || Gym.pickNext(g.pool, g.profile, g.session, g.rng, { type: g.inFeed ? 'all' : g.filter });
     if (!pick) return false;
     const ch = pick.item;
     // Options are shown in a random order; order[j] is the challenge's own index of the option shown at j.
-    const ids = Gym.isLineBug(ch) ? [] : ch.o.map((_, k) => k);
-    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(gym.rng() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
-    gym.items.push({ ...pick, order: ids, chosen: null, hinted: false, seen: false });
-    gym.el.insertAdjacentHTML('beforeend', gymCardHtml(gym.items.length - 1));
-    gym.observer.observe(gym.el.lastElementChild);
+    const shuffled = (n) => {
+      const ids = Array.from({ length: n }, (_, k) => k);
+      for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(g.rng() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+      return ids;
+    };
+    const lineMode = Gym.isLineBug(ch), repair = Gym.isRepair(ch);
+    g.items.push({
+      ...pick,
+      phase: repair ? 'repair' : lineMode ? 'line' : 'choose',
+      order: lineMode || repair ? [] : shuffled(ch.o.length),
+      dxOrder: lineMode ? shuffled(ch.dx.o.length) : [],
+      tries: 0, wrong: [], hints: 0, done: false, seen: false, shownAt: 0,
+      code: repair ? ch.c : '', running: false,
+    });
+    g.el.insertAdjacentHTML('beforeend', gymCardHtml(g, g.items.length - 1));
+    g.observer.observe(g.el.lastElementChild);
     return true;
   }
 
@@ -1297,38 +1345,97 @@
     const rows = Gym.lines(ch).map((l, n) => {
       const inner = `<span class="ln" aria-hidden="true">${n + 1}</span><code>${window.Highlight.code(l, 'javascript') || ' '}</code>`;
       return lineMode
-        ? `<button class="code-line" data-gym-opt="${n}" aria-label="Line ${n + 1}: ${esc(l.trim() || 'blank')}">${inner}</button>`
-        : `<div class="code-line ${n === target ? 'target' : ''}">${inner}</div>`;
+        ? `<button class="code-line" data-gym-line="${n}" aria-label="Line ${n + 1}: ${esc(l.trim() || 'blank')}">${inner}</button>`
+        : `<div class="code-line ${n === target ? 'target' : ''}" data-ln="${n}">${inner}</div>`;
     }).join('');
-    return `<div class="code gym-code ${lineMode ? 'pick-lines' : ''}"${lineMode ? ' role="group" aria-label="Code lines: choose the faulty one"' : ''}>${rows}</div>`;
+    return `<div class="code gym-code ${lineMode ? 'pick-lines' : ''}"${lineMode ? ' role="group" aria-label="Code lines: choose the one with the bug"' : ''}>${rows}</div>`;
   }
+
+  // A diff of two snippets, line by line (longest common subsequence). Rows: [' ' | '-' | '+', text].
+  function lineDiff(a, b) {
+    const A = a.split('\n'), B = b.split('\n');
+    const L = Array.from({ length: A.length + 1 }, () => new Array(B.length + 1).fill(0));
+    for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    const out = [];
+    let i = 0, j = 0;
+    while (i < A.length && j < B.length) {
+      if (A[i] === B[j]) { out.push([' ', A[i]]); i++; j++; } else if (L[i + 1][j] >= L[i][j + 1]) out.push(['-', A[i++]]); else out.push(['+', B[j++]]);
+    }
+    while (i < A.length) out.push(['-', A[i++]]);
+    while (j < B.length) out.push(['+', B[j++]]);
+    return out;
+  }
+  const diffHtml = (rows, label) => `<div class="code gym-code gym-diff" role="group" aria-label="${esc(label)}">${rows.map(([t, s]) =>
+    `<div class="code-line ${t === '-' ? 'del' : t === '+' ? 'add' : ''}"><span class="ln" aria-label="${t === '-' ? 'removed' : t === '+' ? 'added' : ''}">${t === '-' ? '−' : t === '+' ? '+' : ''}</span><code>${s === '' && t === '+' ? '<span class="muted">(delete this line)</span>' : window.Highlight.code(s, 'javascript') || ' '}</code></div>`).join('')}</div>`;
 
   const gymOptionText = (ch, k) => (ch.m === 'fix' ? `<code class="fix-opt">${esc(ch.o[k])}</code>` : rich(ch.o[k]));
   const gymLevel = (d) => `<span class="gym-level" title="Difficulty: ${Gym.LEVELS[d - 1]}"><span class="diff" aria-hidden="true">${[1, 2, 3].map((n) => `<i class="${d >= n ? 'on' : ''}"></i>`).join('')}</span>${Gym.LEVELS[d - 1]}</span>`;
 
-  function gymConceptHtml(id) {
-    const state = Gym.conceptState(gym.profile, id);
+  function gymConceptHtml(g, id) {
+    const state = Gym.conceptState(g.profile, id);
     return `<span class="gym-concept state-${state}" title="Your level on this concept: ${GYM_STATES[state]}">${esc(Gym.conceptOf(id).name)}<b>${GYM_STATES[state]}</b></span>`;
   }
 
-  function gymCardHtml(i) {
-    const it = gym.items[i], ch = it.item, type = Gym.TYPES[ch.type];
-    const slot = GYM_SLOTS[it.slot];
+  // The code editor for a repair: a transparent textarea over a highlighted copy, so the code keeps its colours.
+  function repairHtml(i, ch) {
+    const n = Gym.lines(ch).length;
     return `
-      <section class="reel gym-reel" data-gym="${i}">
+      <div class="repair">
+        <div class="code editor" style="--rows:${n}">
+          <div class="editor-gutter" aria-hidden="true">${Array.from({ length: n }, (_, k) => `<span>${k + 1}</span>`).join('')}</div>
+          <div class="editor-body">
+            <pre class="editor-hl" aria-hidden="true"><code>${window.Highlight.code(ch.c, 'javascript')}\n</code></pre>
+            <textarea class="editor-input" data-repair-input rows="${n}" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"
+              aria-label="Code to fix" aria-describedby="editor-help-${i}">${esc(ch.c)}</textarea>
+          </div>
+        </div>
+        <p class="muted small" id="editor-help-${i}">Tab indents, Esc leaves the editor, Ctrl+Enter runs the tests.</p>
+        <div class="repair-tests">
+          <h3 class="small">Tests</h3>
+          <ul class="test-list">${ch.tests.map((t, k) => `<li data-test="${k}"><span class="test-icon" aria-hidden="true">○</span>
+            <span class="test-body"><code>${esc(t.run)}</code> <span class="muted">→</span> <code>${esc(testWant(t))}</code><span class="test-got"></span></span></li>`).join('')}</ul>
+          ${ch.setup ? `<details class="more"><summary>Test setup</summary><pre class="code"><code>${window.Highlight.code(ch.setup, 'javascript')}</code></pre></details>` : ''}
+        </div>
+        <div class="repair-actions">
+          <button class="btn primary" data-run>${icons.bolt} Run tests</button>
+          <button class="btn" data-reset>Reset code</button>
+          <button class="link-btn" data-giveup>Show the fix</button>
+        </div>
+      </div>`;
+  }
+  // How a test's expected value is shown (strings quoted, like the code that produced them).
+  const testWant = (t) => (typeof t.expect === 'string' ? JSON.stringify(t.expect) : t.expect === undefined ? 'undefined' : Number.isNaN(t.expect) ? 'NaN'
+    : typeof t.expect === 'object' ? JSON.stringify(t.expect).replace(/,/g, ', ').replace(/:/g, ': ') : String(t.expect));
+
+  function gymCardHtml(g, i) {
+    const it = g.items[i], ch = it.item, type = Gym.TYPES[ch.type];
+    const slot = GYM_SLOTS[it.slot];
+    const concept = Gym.conceptOf(ch.concept);
+    let body = '';
+    if (it.phase === 'repair') body = repairHtml(i, ch);
+    else if (it.phase === 'line') body = `<p class="muted small gym-instr">${INSTRUCTIONS.line}</p>`;
+    else body = `<div class="options">${it.order.map((k, j) => `<button class="option" data-gym-opt="${j}"><span class="letter">${LETTERS[j]}</span><span class="opt-text">${gymOptionText(ch, k)}</span></button>`).join('')}</div>`;
+    return `
+      <section class="reel gym-reel ${it.boss ? 'event-boss' : ''}" data-gym="${i}">
         <div class="card reel-card gym-card type-${ch.type}">
+          ${g.inFeed ? `<p class="drop-label"><span aria-hidden="true">🐞</span> Debug drop <a class="muted small" href="#/gym">from Code Gym</a></p>` : ''}
           <div class="reel-meta gym-meta">
             <span class="gym-type"><span aria-hidden="true">${type.icon}</span> ${type.name}</span>
-            ${gymConceptHtml(ch.concept)}
+            ${gymConceptHtml(g, ch.concept)}
             ${gymLevel(ch.d)}
           </div>
           ${slot ? `<p class="gym-slot slot-${it.slot}"><span aria-hidden="true">${slot.icon}</span> ${slot.text}</p>` : ''}
+          ${it.refresher ? `<p class="gym-tip"><strong>Quick refresher on ${esc(concept.name)}:</strong> ${rich(concept.tip)}</p>` : ''}
           <h2 class="q-text">${rich(ch.q)}</h2>
-          ${gymCode(ch)}
-          ${Gym.isLineBug(ch)
-            ? '<p class="muted small gym-instr">Tap the faulty line, or press its number.</p>'
-            : `<div class="options">${it.order.map((k, j) => `<button class="option" data-gym-opt="${j}"><span class="letter">${LETTERS[j]}</span><span class="opt-text">${gymOptionText(ch, k)}</span></button>`).join('')}</div>`}
-          ${ch.hint ? `<div class="gym-hint"><button class="link-btn" data-gym-hint>Show a hint (halves the XP)</button></div>` : ''}
+          ${it.phase === 'repair' ? '' : gymCode(ch)}
+          ${body}
+          <div class="gym-dx"></div>
+          <div class="gym-hints">
+            <ol class="hint-list"></ol>
+            <button class="link-btn" data-gym-hint>Need a hint? (1 of 3)</button>
+            <span class="muted small">Hints cost a little XP, never progress.</span>
+          </div>
+          <div class="gym-try" aria-live="polite"></div>
           <div class="reel-feedback" aria-live="polite"></div>
         </div>
         <div class="reel-rail">
@@ -1337,91 +1444,232 @@
       </section>`;
   }
 
-  function onGymVisible(reel) {
-    gym.current = reel;
-    const it = reel.dataset.gym != null && gym.items[+reel.dataset.gym];
-    if (it) it.seen = true;
-    ensureGymAhead();
+  function onGymVisible(g, reel) {
+    if (!g.inFeed) g.current = reel;
+    const it = reel.dataset.gym != null && gymItem(g, reel);
+    if (it) {
+      it.seen = true;
+      if (!it.shownAt) it.shownAt = performance.now();
+    }
+    if (!g.inFeed) ensureGymAhead(g);
   }
 
-  function onGymClick(e) {
-    if (e.target.closest('[data-recap]')) return showGymRecap();
+  function onGymClick(g, e) {
+    if (!g.inFeed && e.target.closest('[data-recap]')) return showGymRecap();
     const reel = e.target.closest('.reel');
     if (!reel || reel.dataset.gym == null) return;
-    const opt = e.target.closest('[data-gym-opt]');
-    if (opt) answerGym(reel, +opt.dataset.gymOpt);
-    else if (e.target.closest('[data-gym-hint]')) showGymHint(reel);
-    else if (e.target.closest('[data-step]')) stepFeed(1, reel);
+    const it = gymItem(g, reel);
+    if (!it.seen) onGymVisible(g, reel);
+    const t = (sel) => e.target.closest(sel);
+    if (t('[data-gym-opt]')) chooseOption(g, reel, +t('[data-gym-opt]').dataset.gymOpt);
+    else if (t('[data-gym-line]')) chooseLine(g, reel, +t('[data-gym-line]').dataset.gymLine);
+    else if (t('[data-gym-dx]')) chooseDiagnosis(g, reel, +t('[data-gym-dx]').dataset.gymDx);
+    else if (t('[data-gym-hint]')) showGymHint(g, reel);
+    else if (t('[data-run]')) runRepair(g, reel);
+    else if (t('[data-reset]')) resetRepair(g, reel);
+    else if (t('[data-giveup]')) { if (!it.done && !it.running) finishGym(g, reel, false); }
+    else if (t('[data-tstep]')) stepTrace(reel, +t('[data-tstep]').dataset.tstep);
+    else if (t('[data-step]')) stepFeed(1, reel);
   }
 
-  function showGymHint(reel) {
-    const it = gym.items[+reel.dataset.gym];
-    const box = reel.querySelector('.gym-hint');
-    if (!box || it.chosen != null || it.hinted) return;
-    it.hinted = true;
-    box.innerHTML = `<p><strong>Hint:</strong> ${rich(it.item.hint)}</p>`;
-  }
-
-  function answerGym(reel, j) {
-    const it = gym.items[+reel.dataset.gym];
-    const ch = it.item, lineMode = Gym.isLineBug(ch);
-    const choice = lineMode ? j : it.order[j];
-    if (it.chosen != null || choice == null || choice >= Gym.choiceCount(ch)) return;
-    it.chosen = choice;
-    if (!it.seen) { it.seen = true; gym.current = reel; }
-    const res = Gym.recordAnswer(gym.profile, gym.session, it, { choice, hinted: it.hinted });
-    const ok = res.correct;
-
-    reel.querySelectorAll('[data-gym-opt]').forEach((b) => {
-      const k = lineMode ? +b.dataset.gymOpt : it.order[+b.dataset.gymOpt];
-      b.disabled = true;
-      b.classList.add(k === ch.a ? 'correct' : k === choice ? 'wrong' : 'dim');
-      const letter = b.querySelector('.letter');
-      if (letter && k === ch.a) letter.innerHTML = icons.check;
-      else if (letter && k === choice) letter.innerHTML = icons.x;
-    });
-    const hintBtn = reel.querySelector('[data-gym-hint]');
-    if (hintBtn) hintBtn.parentElement.remove();
-    reel.querySelector('.gym-concept').outerHTML = gymConceptHtml(ch.concept);
-
-    const concept = Gym.conceptOf(ch.concept).name;
-    const why = !ok && ch.w && ch.w[choice] ? ch.w[choice] : '';
-    const { brief, more } = Adaptive.splitExplanation(ch.e);
-    const others = (ch.w || []).map((w, k) => (w && k !== choice && k !== ch.a ? `<li><strong>${gymOptionText(ch, k)}</strong>: ${rich(w)}</li>` : '')).join('');
-    let fix = '';
-    if (ch.type === 'bug') {
-      const before = Gym.lines(ch)[lineMode ? ch.a : ch.line].trim();
-      const after = (lineMode ? ch.fix : ch.o[ch.a]).trim();
-      fix = `<div class="code gym-code gym-diff" aria-label="The fix">
-        <div class="code-line del"><span class="ln">−</span><code>${window.Highlight.code(before, 'javascript')}</code></div>
-        ${after ? `<div class="code-line add"><span class="ln">+</span><code>${window.Highlight.code(after, 'javascript')}</code></div>` : '<div class="code-line add"><span class="ln">+</span><code class="muted">(delete this line)</code></div>'}
-      </div>`;
+  // ---- hints ----
+  function showGymHint(g, reel) {
+    const it = gymItem(g, reel);
+    const hints = Gym.hintsFor(it.item);
+    if (it.done || it.hints >= hints.length) return;
+    const k = it.hints++;
+    reel.querySelector('.hint-list').insertAdjacentHTML('beforeend', `<li><strong>${HINT_LABELS[k]}:</strong> ${rich(hints[k])}</li>`);
+    // "Where to look" also marks the lines in the code.
+    if (k === 1) {
+      const win = /lines (\d+)–(\d+)/.exec(hints[1]);
+      const marked = win ? [+win[1] - 1, +win[2] - 1] : [Gym.focusLine(it.item), Gym.focusLine(it.item)];
+      reel.querySelectorAll('.gym-code:not(.gym-diff) .code-line').forEach((l, n) => { if (n >= marked[0] && n <= marked[1]) l.classList.add('hinted'); });
     }
-    const notes = [
-      res.relearned ? `🎯 Relearned: ${esc(concept)}. That earlier miss is cleared.` : '',
-      res.mastered ? `🏅 Concept mastered: ${esc(concept)}. It will come back less often.` : '',
-      !ok ? `${esc(concept)} will come back in a few cards with a different example.` : '',
-      ...res.milestones.map((n) => `🏅 ${n} challenges done this session`),
-    ].filter(Boolean);
-    const detail = (ch.steps ? `<ol class="gym-steps">${ch.steps.map((s) => `<li>${rich(s)}</li>`).join('')}</ol>` : '')
-      + (more ? `<p>${rich(more)}</p>` : '') + (others ? `<ul>${others}</ul>` : '');
-    reel.querySelector('.reel-feedback').innerHTML = `
-      <div class="feedback ${ok ? 'ok' : 'bad'}">
-        <div class="feedback-title">${ok ? `${icons.check} ${res.streak > 2 ? `${res.streak} in a row!` : 'Correct!'}` : `${icons.x} Not quite`}
-          <span class="points">+${res.xp} XP</span>${!ok ? '<span class="muted small">for learning</span>' : ''}</div>
-        ${!ok ? `<p class="key"><strong>Answer:</strong> ${lineMode ? `line ${ch.a + 1}` : gymOptionText(ch, ch.a)}</p>` : ''}
-        ${why ? `<p><strong>Why not that:</strong> ${rich(why)}</p>` : ''}
-        ${fix}
-        <p>${rich(brief)}</p>
-        ${detail ? `<details class="more"><summary>${ch.steps ? 'Step by step' : 'Explain more'}</summary>${detail}</details>` : ''}
-        ${notes.map((n) => `<p class="note">${n}</p>`).join('')}
-      </div>
-      <p class="muted small swipe-hint">Scroll or press Enter for the next one ${icons.down}</p>`;
+    const btn = reel.querySelector('[data-gym-hint]');
+    if (it.hints >= hints.length) btn.remove();
+    else btn.textContent = `Next hint (${it.hints + 1} of ${hints.length})`;
+  }
 
+  // ---- answering: multiple choice, tap a line, diagnose ----
+  // A wrong first try gets specific feedback and another go (when there are more than two choices).
+  function retryNote(reel, html) {
+    reel.querySelector('.gym-try').innerHTML = `<div class="try-box"><strong>${icons.x} Not quite.</strong> ${html}
+      <span class="muted">Try again${reel.querySelector('[data-gym-hint]') ? ', or take a hint' : ''}.</span></div>`;
+  }
+
+  function chooseOption(g, reel, j) {
+    const it = gymItem(g, reel), ch = it.item;
+    const k = it.order[j];
+    if (it.done || it.phase !== 'choose' || k == null || it.wrong.includes(k)) return;
+    it.tries++;
+    const btn = reel.querySelector(`[data-gym-opt="${j}"]`);
+    if (k === ch.a) return finishGym(g, reel, true);
+    it.wrong.push(k);
+    btn.disabled = true;
+    btn.classList.add('wrong');
+    btn.querySelector('.letter').innerHTML = icons.x;
+    if (it.tries >= Gym.triesFor(ch.o.length)) return finishGym(g, reel, false);
+    retryNote(reel, ch.w && ch.w[k] ? rich(ch.w[k]) : 'That is not what this code does.');
+  }
+
+  function chooseLine(g, reel, n) {
+    const it = gymItem(g, reel), ch = it.item;
+    if (it.done || it.phase !== 'line' || it.wrong.includes(n) || n >= Gym.lines(ch).length) return;
+    it.tries++;
+    const btn = reel.querySelector(`[data-gym-line="${n}"]`);
+    if (n !== ch.a) {
+      it.wrong.push(n);
+      btn.disabled = true;
+      btn.classList.add('wrong');
+      if (it.tries >= Gym.TUNING.MAX_TRIES) return finishGym(g, reel, false);
+      return retryNote(reel, `Line ${n + 1} does what it says. Look for the first line where a value goes wrong.`);
+    }
+    // Found it: now say what is wrong with it.
+    it.phase = 'dx';
+    reel.querySelector('.gym-try').innerHTML = '';
+    reel.querySelector('.gym-instr')?.remove();
+    reel.querySelectorAll('[data-gym-line]').forEach((b) => { b.disabled = true; if (+b.dataset.gymLine === n) b.classList.add('found'); });
+    reel.querySelector('.gym-dx').innerHTML = `
+      <p class="dx-q"><strong>${icons.check} Line ${n + 1} it is.</strong> What is wrong with it?</p>
+      <div class="options">${it.dxOrder.map((k, j) => `<button class="option" data-gym-dx="${j}"><span class="letter">${LETTERS[j]}</span><span class="opt-text">${rich(ch.dx.o[k])}</span></button>`).join('')}</div>`;
+    reel.querySelector('[data-gym-dx]').focus({ preventScroll: true });
+  }
+
+  function chooseDiagnosis(g, reel, j) {
+    const it = gymItem(g, reel), dx = it.item.dx;
+    const k = it.dxOrder[j];
+    if (it.done || it.phase !== 'dx' || k == null || it.wrong.includes('dx' + k)) return;
+    const btn = reel.querySelector(`[data-gym-dx="${j}"]`);
+    if (k === dx.a) return finishGym(g, reel, true);
+    it.tries++;
+    it.wrong.push('dx' + k);
+    btn.disabled = true;
+    btn.classList.add('wrong');
+    btn.querySelector('.letter').innerHTML = icons.x;
+    // Finding the line counts for a lot: missing the diagnosis twice still ends as a (helped) solve.
+    if (it.wrong.filter((w) => String(w).startsWith('dx')).length >= Gym.triesFor(dx.o.length)) return finishGym(g, reel, true);
+    retryNote(reel, dx.w && dx.w[k] ? rich(dx.w[k]) : 'That is not the problem on this line.');
+  }
+
+  // ---- repair: editing and running tests ----
+  function onGymInput(g, e) {
+    const ta = e.target.closest('[data-repair-input]');
+    if (!ta) return;
+    const reel = ta.closest('.reel');
+    const it = gymItem(g, reel);
+    it.code = ta.value;
+    syncEditor(ta);
+  }
+  function syncEditor(ta) {
+    const editor = ta.closest('.editor');
+    const n = ta.value.split('\n').length;
+    ta.rows = n;
+    editor.style.setProperty('--rows', n);
+    editor.querySelector('.editor-hl code').innerHTML = window.Highlight.code(ta.value, 'javascript') + '\n';
+    editor.querySelector('.editor-gutter').innerHTML = Array.from({ length: n }, (_, k) => `<span>${k + 1}</span>`).join('');
+    editor.querySelector('.editor-hl').style.transform = `translateX(${-ta.scrollLeft}px)`;
+  }
+  function onEditorKey(g, e) {
+    const ta = e.target.closest && e.target.closest('[data-repair-input]');
+    if (!ta) return;
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runRepair(g, ta.closest('.reel')); return; }
+    if (e.key === 'Escape') { e.preventDefault(); ta.blur(); ta.closest('.reel-card').querySelector('[data-run]')?.focus(); return; }
+    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+  document.addEventListener('scroll', (e) => {
+    if (e.target.matches && e.target.matches('[data-repair-input]')) e.target.closest('.editor').querySelector('.editor-hl').style.transform = `translateX(${-e.target.scrollLeft}px)`;
+  }, true);
+
+  function resetRepair(g, reel) {
+    const it = gymItem(g, reel);
+    if (it.done || it.running) return;
+    const ta = reel.querySelector('[data-repair-input]');
+    ta.value = it.code = it.item.c;
+    syncEditor(ta);
+    ta.focus();
+  }
+
+  async function runRepair(g, reel) {
+    const it = gymItem(g, reel), ch = it.item;
+    if (it.done || it.running) return;
+    it.running = true;
+    const btn = reel.querySelector('[data-run]');
+    btn.disabled = true;
+    btn.textContent = 'Running…';
+    reel.querySelectorAll('[data-test]').forEach((li) => { li.className = 'running'; li.querySelector('.test-icon').textContent = '…'; li.querySelector('.test-got').innerHTML = ''; });
+    const res = await window.Sandbox.run(it.code, ch.tests, { setup: ch.setup || '' });
+    it.running = false;
+    if (!g.alive || !reel.isConnected) return;
+    btn.disabled = false;
+    btn.innerHTML = `${icons.bolt} Run tests`;
+    if (res.unavailable) {
+      reel.querySelector('.gym-try').innerHTML = `<div class="try-box">${esc(res.error)} Try serving the site over http (for example <code>python3 -m http.server</code>).</div>`;
+      reel.querySelectorAll('[data-test]').forEach((li) => { li.className = ''; li.querySelector('.test-icon').textContent = '○'; });
+      return;
+    }
+    it.tries++;
+    res.results.forEach((r, k) => {
+      const li = reel.querySelector(`[data-test="${k}"]`);
+      li.className = r.pass ? 'pass' : 'fail';
+      li.querySelector('.test-icon').textContent = r.pass ? '✓' : '✗';
+      li.querySelector('.test-got').innerHTML = r.pass ? '' : `<span class="got">${r.error ? esc(r.error) : `got <code>${esc(r.got)}</code>`}</span>`;
+    });
+    const passed = res.results.filter((r) => r.pass).length;
+    if (res.ok) return finishGym(g, reel, true, res);
+    const first = res.results.find((r) => !r.pass);
+    const why = res.timedOut ? esc(res.error) : res.error ? `Your code does not run: <code>${esc(res.error)}</code>.`
+      : first.error ? `<code>${esc(first.run)}</code> threw <code>${esc(first.error)}</code>.`
+      : `<code>${esc(first.run)}</code> returned <code>${esc(first.got)}</code>, but the test expects <code>${esc(first.want)}</code>.`;
+    reel.querySelector('.gym-try').innerHTML = `<div class="try-box"><strong>${passed} of ${res.results.length} tests pass.</strong> ${why}
+      ${res.logs.length ? `<details class="more"><summary>Console output (${res.logs.length})</summary><pre class="code console-out">${esc(res.logs.join('\n'))}</pre></details>` : ''}
+      <span class="muted">Adjust the code and run again${it.hints < 3 ? ', or take a hint' : ''}.</span></div>`;
+  }
+
+  // ---- finishing a challenge: record it and teach ----
+  function finishGym(g, reel, correct, run) {
+    const it = gymItem(g, reel), ch = it.item;
+    if (it.done) return;
+    it.done = true;
+    if (!it.seen) onGymVisible(g, reel);
+    const ms = it.shownAt ? performance.now() - it.shownAt : 0;
+    const res = Gym.recordAnswer(g.profile, g.session, it, { correct, hints: it.hints, attempts: Math.max(1, it.tries), ms });
+    const lineMode = Gym.isLineBug(ch), repair = Gym.isRepair(ch);
+
+    // Lock the card and show the answer in place.
+    reel.querySelectorAll('[data-gym-opt]').forEach((b) => {
+      const k = it.order[+b.dataset.gymOpt];
+      b.disabled = true;
+      if (k === ch.a) { b.classList.remove('wrong'); b.classList.add('correct'); b.querySelector('.letter').innerHTML = icons.check; } else if (!b.classList.contains('wrong')) b.classList.add('dim');
+    });
+    reel.querySelectorAll('[data-gym-line]').forEach((b) => {
+      b.disabled = true;
+      if (+b.dataset.gymLine === ch.a) b.classList.add(b.classList.contains('found') ? 'found' : 'correct'); else if (!b.classList.contains('wrong')) b.classList.add('dim');
+    });
+    reel.querySelectorAll('[data-gym-dx]').forEach((b) => {
+      const k = it.dxOrder[+b.dataset.gymDx];
+      b.disabled = true;
+      if (k === ch.dx.a) { b.classList.remove('wrong'); b.classList.add('correct'); b.querySelector('.letter').innerHTML = icons.check; } else if (!b.classList.contains('wrong')) b.classList.add('dim');
+    });
+    reel.querySelectorAll('[data-repair-input]').forEach((b) => { b.disabled = true; });
+    reel.querySelector('.repair-actions')?.remove();
+    reel.querySelector('.repair [id^="editor-help"]')?.remove();
+    reel.querySelector('.gym-instr')?.remove();
+    reel.querySelector('[data-gym-hint]')?.remove();
+    reel.querySelector('.gym-hints .small')?.remove();
+    reel.querySelector('.gym-try').innerHTML = '';
+    reel.querySelector('.gym-concept').outerHTML = gymConceptHtml(g, ch.concept);
+    const at = Gym.focusLine(ch);
+    if (at >= 0 && !lineMode) reel.querySelector(`.gym-code [data-ln="${at}"]`)?.classList.add('focus');
+
+    reel.querySelector('.reel-feedback').innerHTML = feedbackHtml(g, it, res, run);
     const card = reel.querySelector('.reel-card');
     card.classList.remove('pop-ok', 'pop-bad');
     void card.offsetWidth;
-    card.classList.add(ok ? 'pop-ok' : 'pop-bad');
+    card.classList.add(correct ? 'pop-ok' : 'pop-bad');
     const float = document.createElement('span');
     float.className = 'points-float';
     float.textContent = `+${res.xp} XP`;
@@ -1429,25 +1677,154 @@
     float.addEventListener('animationend', () => float.remove());
 
     // Re-pick the queued card if nobody has seen it, so it reflects this answer.
-    const next = reel.nextElementSibling;
-    const ni = next && next.dataset.gym != null ? +next.dataset.gym : -1;
-    if (ni === gym.items.length - 1 && !gym.items[ni].seen && gym.items[ni].chosen == null) {
-      Gym.unpick(gym.session, gym.items.pop());
-      gym.observer.unobserve(next);
-      next.remove();
+    if (!g.inFeed) {
+      const next = reel.nextElementSibling;
+      const ni = next && next.dataset.gym != null ? +next.dataset.gym : -1;
+      if (ni === g.items.length - 1 && !g.items[ni].seen && !g.items[ni].done) {
+        Gym.unpick(g.session, g.items.pop());
+        g.observer.unobserve(next);
+        next.remove();
+      }
+      ensureGymAhead(g);
     }
-    ensureGymAhead();
-    saveGym();
-    updateGymStats(ok);
+    saveGym(g);
+    if (!g.inFeed) updateGymStats(res.correct);
+    if (it.phase === 'repair' || !reel.contains(document.activeElement)) reel.querySelector('.feedback-title')?.focus({ preventScroll: true });
+  }
+
+  function feedbackHtml(g, it, res, run) {
+    const ch = it.item, ok = res.correct;
+    const lineMode = Gym.isLineBug(ch), repair = Gym.isRepair(ch);
+    const concept = Gym.conceptOf(ch.concept).name;
+    const { brief, more } = Adaptive.splitExplanation(ch.e);
+    const badges = [
+      res.solo ? `<span class="mult">Solo +${Gym.TUNING.SOLO_XP}</span>` : '',
+      res.boss && ok ? `<span class="mult hot">Boss ×${Gym.TUNING.BOSS_FACTOR}</span>` : '',
+      res.daily && ok ? `<span class="mult">Daily +${Gym.TUNING.DAILY_XP}</span>` : '',
+    ].join('');
+    const title = ok
+      ? `${icons.check} ${res.solo ? (res.streak > 2 ? `${res.streak} in a row!` : 'Solved!') : 'Solved with help'}`
+      : `${icons.x} ${repair ? 'Here is the fix' : 'Not this time'}`;
+
+    // The answer, when it wasn't found.
+    let key = '';
+    if (!ok && lineMode) key = `<p class="key"><strong>The bug is on line ${ch.a + 1}:</strong> ${rich(ch.dx.o[ch.dx.a])}</p>`;
+    else if (!ok && !repair) key = `<p class="key"><strong>Answer:</strong> ${gymOptionText(ch, ch.a)}</p>`;
+    else if (ok && lineMode && it.wrong.some((w) => String(w).startsWith('dx'))) key = `<p class="key"><strong>The problem:</strong> ${rich(ch.dx.o[ch.dx.a])}</p>`;
+
+    // What ran: the output, or the fix as a before/after diff.
+    let shown = '';
+    if (ch.type === 'output') shown = `<div class="gym-out"><span class="muted small">Output</span><pre class="code">${esc(ch.o[ch.a])}</pre></div>`;
+    else if (ch.type === 'bug') {
+      const before = Gym.lines(ch)[lineMode ? ch.a : ch.line].trim();
+      const after = (lineMode ? ch.fix : ch.o[ch.a]).trim();
+      shown = diffHtml([['-', before], ['+', after]], 'The fix');
+    } else if (repair) {
+      shown = ok
+        ? `<p class="small muted">Your fix passes all ${ch.tests.length} tests. One reference fix:</p>${diffHtml(lineDiff(ch.c, ch.solution), 'Reference fix')}`
+        : diffHtml(lineDiff(ch.c, ch.solution), 'The fix');
+    }
+
+    const others = !repair && !lineMode ? (ch.w || []).map((w, k) => (w && k !== ch.a ? `<li><strong>${gymOptionText(ch, k)}</strong>: ${rich(w)}</li>` : '')).join('') : '';
+    const structured = Array.isArray(ch.steps) && ch.steps.some((s) => typeof s === 'object');
+    const steps = !ch.steps ? '' : structured ? stepperHtml(ch) : `<ol class="gym-steps">${ch.steps.map((s) => `<li>${rich(s)}</li>`).join('')}</ol>`;
+    const detail = (more ? `<p><strong>Why it happens:</strong> ${rich(more)}</p>` : '')
+      + (ch.spot ? `<p><strong>Spot it yourself:</strong> ${rich(ch.spot)}</p>` : '')
+      + steps
+      + (others ? `<p><strong>The other options:</strong></p><ul>${others}</ul>` : '');
+    const notes = [
+      res.relearned ? `🎯 Relearned: ${esc(concept)}. That earlier miss is cleared.` : '',
+      res.mastered ? `🏅 Concept mastered: ${esc(concept)}. It will come back less often.` : '',
+      res.boss && ok ? '👑 Boss beaten!' : '',
+      res.daily ? `📅 Daily debug done. Streak: ${res.dailyStreak} day${res.dailyStreak === 1 ? '' : 's'}.` : '',
+      !ok ? `${esc(concept)} will come back in a few cards with a different example.` : '',
+      ok && !res.solo ? `${esc(concept)} will come back soon to check it stuck. Solve one solo to level it up.` : '',
+      ...res.milestones.map((n) => `🏅 ${n} challenges done this session`),
+    ].filter(Boolean);
+    return `
+      <div class="feedback ${ok ? 'ok' : 'bad'}">
+        <div class="feedback-title" tabindex="-1">${title}<span class="points">+${res.xp} XP</span>${badges}${!ok ? '<span class="muted small">for learning</span>' : ''}</div>
+        ${key}
+        ${shown}
+        <p>${rich(brief)}</p>
+        <p class="lesson-rule"><strong>Rule of thumb:</strong> ${rich(ch.rule)}</p>
+        ${detail ? `<details class="more" ${structured ? 'data-has-stepper' : ''}><summary>${structured ? 'Explain it step by step' : 'Explain more'}</summary>${detail}</details>` : ''}
+        ${notes.map((n) => `<p class="note">${n}</p>`).join('')}
+      </div>
+      <p class="muted small swipe-hint">Scroll or press Enter for the next one ${icons.down}</p>`;
+  }
+
+  // ---- trace stepper: one step at a time, highlighting the line it is on ----
+  const stepOf = (s) => (typeof s === 'string' ? { t: s } : s);
+  function stepperHtml(ch) {
+    return `<div class="stepper" data-stepper data-at="0" data-n="${ch.steps.length}">
+      <div class="stepper-bar">
+        <button class="chip" data-tstep="-1" aria-label="Previous step" disabled>◀</button>
+        <span class="small" aria-live="polite" data-tstep-count>Step 1 of ${ch.steps.length}</span>
+        <button class="chip" data-tstep="1" aria-label="Next step">▶</button>
+      </div>
+      ${ch.steps.map((raw, k) => {
+        const s = stepOf(raw);
+        return `<div class="step" data-tstep-i="${k}" ${k ? 'hidden' : ''} ${s.l != null ? `data-line="${s.l}"` : ''}>
+          <p>${s.l != null ? `<span class="step-line">line ${s.l + 1}</span> ` : ''}${rich(s.t)}</p>
+          ${s.v ? `<div class="vars">${Object.entries(s.v).map(([name, v]) => `<span class="var"><code>${esc(name)}</code> = <code>${esc(v)}</code></span>`).join('')}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+  function stepTrace(reel, d) {
+    const box = reel.querySelector('[data-stepper]');
+    if (!box) return;
+    const n = +box.dataset.n, at = Math.max(0, Math.min(n - 1, +box.dataset.at + d));
+    box.dataset.at = at;
+    box.querySelectorAll('[data-tstep-i]').forEach((s) => { s.hidden = +s.dataset.tstepI !== at; });
+    box.querySelector('[data-tstep-count]').textContent = `Step ${at + 1} of ${n}`;
+    box.querySelector('[data-tstep="-1"]').disabled = at === 0;
+    box.querySelector('[data-tstep="1"]').disabled = at === n - 1;
+    highlightStep(reel);
+  }
+  function highlightStep(reel) {
+    const box = reel.querySelector('[data-stepper]');
+    reel.querySelectorAll('.code-line.now').forEach((l) => l.classList.remove('now'));
+    if (!box || !box.closest('details').open) return;
+    const line = box.querySelector(`[data-tstep-i="${box.dataset.at}"]`).dataset.line;
+    if (line != null) reel.querySelector(`.gym-code:not(.gym-diff) [data-ln="${line}"], .gym-code:not(.gym-diff) [data-gym-line="${line}"]`)?.classList.add('now');
+  }
+  document.addEventListener('toggle', (e) => {
+    if (e.target.matches && e.target.matches('[data-has-stepper]')) highlightStep(e.target.closest('.reel'));
+  }, true);
+
+  // ---- keys shared by the Code Gym page and debug drops in the feed. Returns true if it handled the key. ----
+  function gymKey(g, reel, e) {
+    const it = gymItem(g, reel);
+    if (!it) return false;
+    const k = e.key.toUpperCase();
+    if (e.key === 'Enter') { if (it.done) { e.preventDefault(); stepFeed(1, reel); return true; } return false; }
+    if (k === 'H') { e.preventDefault(); showGymHint(g, reel); return true; }
+    if (it.done) return false;
+    if (it.phase === 'repair') {
+      if (k === 'E' || k === 'R') { e.preventDefault(); reel.querySelector('[data-repair-input]').focus(); return true; }
+      return false;
+    }
+    const n = it.phase === 'line' ? Gym.lines(it.item).length : it.phase === 'dx' ? it.item.dx.o.length : it.item.o.length;
+    const idx = /^[1-9]$/.test(k) ? +k - 1 : it.phase === 'line' ? -1 : LETTERS.indexOf(k);
+    if (idx < 0 || idx >= n) return false;
+    e.preventDefault();
+    if (it.phase === 'line') chooseLine(g, reel, idx);
+    else if (it.phase === 'dx') chooseDiagnosis(g, reel, idx);
+    else chooseOption(g, reel, idx);
+    return true;
   }
 
   function updateGymStats(bump) {
-    const s = gym.session;
+    const s = gym.session, p = gym.profile;
+    const daily = p.daily === Gym.today() ? p.dailyStreak : 0;
     app.querySelector('#gym-stats').innerHTML = `
-      <span class="hud-score ${bump ? 'bump' : ''}" title="XP this session (${fmtNum(gym.profile.xp)} in total)">⚡ ${fmtNum(s.xp)} XP</span>
+      <span class="hud-score ${bump ? 'bump' : ''}" title="XP this session (${fmtNum(p.xp)} in total)">⚡ ${fmtNum(s.xp)} XP</span>
       <span class="${s.streak > 2 ? 'hot' : ''}" title="Correct in a row">🔥 ${s.streak}</span>
+      ${daily ? `<span title="Daily debug streak (days)">📅 ${daily}</span>` : ''}
       <span class="muted secondary" title="Correct / answered this session">${s.correct}/${s.answered}</span>
-      <span class="muted secondary" title="Total XP">Total ${fmtNum(gym.profile.xp)}</span>`;
+      <span class="muted secondary" title="Total XP">Total ${fmtNum(p.xp)}</span>`;
     const list = Gym.TUNING.MILESTONES;
     const to = list.find((n) => n > s.answered);
     const from = [...list].reverse().find((n) => n <= s.answered) || 0;
@@ -1482,7 +1859,7 @@
           <div class="recap-stats">
             <div><b>${fmtNum(s.xp)}</b><span>XP earned</span></div>
             <div><b>${acc}%</b><span>${s.correct}/${s.answered} correct</span></div>
-            <div><b>${s.bestStreak}</b><span>best streak</span></div>
+            <div><b>${s.solo}</b><span>solved solo</span></div>
           </div>
           ${learned.length ? `<h3>Learned this session</h3><ul class="topic-list">${learned.map((id) => gymConceptRow(id, score(id))).join('')}</ul>` : ''}
           ${strengths.length ? `<h3>Going well</h3><ul class="topic-list">${strengths.filter((id) => !learned.includes(id)).slice(0, 4).map((id) => gymConceptRow(id, score(id))).join('')}</ul>` : ''}
@@ -1493,7 +1870,8 @@
           <details class="more"><summary>All concepts</summary>
             <ul class="topic-list">${Gym.CONCEPTS.map((c) => gymConceptRow(c.id)).join('')}</ul>
           </details>
-          <p class="muted small">All time: ${fmtNum(p.xp)} XP · ${life.n ? Math.round((life.c / life.n) * 100) : 0}% of ${life.n} correct · best streak ${p.bestStreak}</p>
+          <p class="muted small">All time: ${fmtNum(p.xp)} XP · ${life.n ? Math.round((life.c / life.n) * 100) : 0}% of ${life.n} correct · best streak ${p.bestStreak}
+            · ${p.bosses} boss${p.bosses === 1 ? '' : 'es'} beaten${p.dailyStreak ? ` · daily streak ${p.dailyStreak}` : ''}</p>
           <div class="result-actions">
             <button class="btn primary" data-recap-close>Keep going</button>
             ${s.answered ? '<button class="btn" data-recap-reset>Start a new session</button>' : ''}
@@ -1505,7 +1883,7 @@
       if (e.target === panel || e.target.closest('[data-recap-close]')) closeGymRecap();
       else if (e.target.closest('[data-recap-reset]')) {
         gym.session = Gym.newSession(gym.filter);
-        saveGym();
+        saveGym(gym);
         updateGymStats();
         closeGymRecap();
       }
@@ -1519,7 +1897,7 @@
   }
 
   document.addEventListener('keydown', (e) => {
-    if (!gym || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!gym || e.ctrlKey || e.metaKey || e.altKey || isTyping(e)) return;
     if (app.querySelector('.recap')) { if (e.key === 'Escape') { e.preventDefault(); closeGymRecap(); } return; }
     // Enter/Space on a focused button, link or summary does its own thing.
     if (e.target.closest && e.target.closest('button, a, summary') && (e.key === 'Enter' || e.key === ' ')) return;
@@ -1527,12 +1905,7 @@
     if (e.key === 'ArrowDown' || k === 'J') { e.preventDefault(); stepFeed(1, gym.current); return; }
     if (e.key === 'ArrowUp' || k === 'K') { e.preventDefault(); stepFeed(-1, gym.current); return; }
     const reel = gym.current;
-    if (!reel || reel.dataset.gym == null) return;
-    const it = gym.items[+reel.dataset.gym];
-    if (e.key === 'Enter') { if (it.chosen != null) { e.preventDefault(); stepFeed(1, reel); } return; }
-    if (k === 'H') { e.preventDefault(); showGymHint(reel); return; }
-    const idx = /^[1-9]$/.test(k) ? +k - 1 : Gym.isLineBug(it.item) ? -1 : LETTERS.indexOf(k);
-    if (idx >= 0 && idx < Gym.choiceCount(it.item)) { e.preventDefault(); answerGym(reel, idx); }
+    if (reel && reel.dataset.gym != null) gymKey(gym, reel, e);
   });
 
   // ---------- keyboard ----------

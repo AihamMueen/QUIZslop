@@ -2,6 +2,9 @@
 // `verify` is test-only code that prints the answer; tests/gym.test.js runs it and checks it matches o[a].
 CodeGym.add([
   { id: 'trace-loop-sum-i', type: 'trace', concept: 'loops', d: 1,
+    at: 2,
+    hint: 'Write down `i` for each iteration. The first one is 0, not 1.',
+    rule: 'Count iterations from the loop\'s real start value: the first iteration of `i = 0` adds 0.',
     q: 'What is `count` after the third iteration?',
     c: 'let count = 0;\nfor (let i = 0; i < 5; i++) {\n  count += i;\n}',
     o: ['3', '6', '2', '0'], a: 0,
@@ -11,6 +14,9 @@ CodeGym.add([
     verify: 'let count = 0;\nfor (let i = 0; i < 5; i++) {\n  count += i;\n  if (i === 2) console.log(count);\n}' },
 
   { id: 'trace-increment', type: 'trace', concept: 'operators', d: 1,
+    at: 1,
+    hint: 'Postfix `a++` uses the old value in the expression, then increments.',
+    rule: 'Avoid `++` inside bigger expressions. Increment on its own line so the order is obvious.',
     q: 'What are `a` and `b` at the end?',
     c: 'let a = 5;\nlet b = a++ + 2;\nb += a;',
     o: ['a = 6, b = 13', 'a = 6, b = 14', 'a = 5, b = 12', 'a = 6, b = 7'], a: 0,
@@ -20,6 +26,9 @@ CodeGym.add([
     verify: 'let a = 5;\nlet b = a++ + 2;\nb += a;\nconsole.log(`a = ${a}, b = ${b}`);' },
 
   { id: 'trace-branch', type: 'trace', concept: 'conditionals', d: 1,
+    at: 5,
+    hint: 'Work out each condition to true or false before choosing a branch.',
+    rule: 'Reduce each condition to true or false step by step: `||` needs one side, `&&` needs both.',
     q: 'Which branch runs?',
     c: 'const temp = 18;\nconst raining = false;\nlet plan;\nif (temp > 25 || raining) {\n  plan = "stay in";\n} else if (temp > 15 && !raining) {\n  plan = "go for a walk";\n} else {\n  plan = "bring a jacket";\n}',
     o: ['The `if` branch', 'The `else if` branch', 'The `else` branch', 'None of them'], a: 1,
@@ -29,6 +38,9 @@ CodeGym.add([
     verify: 'const temp = 18;\nconst raining = false;\nif (temp > 25 || raining) console.log("The `if` branch");\nelse if (temp > 15 && !raining) console.log("The `else if` branch");\nelse console.log("The `else` branch");' },
 
   { id: 'trace-call-count', type: 'trace', concept: 'functions', d: 1,
+    at: 5,
+    hint: '`map` calls its callback once for every element.',
+    rule: 'Passing a function to `map` calls it once per element, on top of any direct calls.',
     q: 'How many times does `greet` run?',
     c: 'function greet(name) {\n  return "Hi " + name;\n}\nconst names = ["Ana", "Ben", "Cy"];\nconst first = greet(names[0]);\nconst all = names.map(greet);',
     o: ['3', '4', '1', '6'], a: 1,
@@ -38,6 +50,9 @@ CodeGym.add([
     verify: 'let calls = 0;\nfunction greet(name) {\n  calls++;\n  return "Hi " + name;\n}\nconst names = ["Ana", "Ben", "Cy"];\nconst first = greet(names[0]);\nconst all = names.map(greet);\nconsole.log(calls);' },
 
   { id: 'trace-describe', type: 'trace', concept: 'variables', d: 1,
+    at: 2,
+    hint: 'What is `typeof []`?',
+    rule: 'Order checks from most specific to most general: arrays pass a `typeof === "object"` check.',
     q: 'What does `describe([])` return?',
     c: 'function describe(value) {\n  if (value === null) return "null";\n  if (typeof value === "object") return "object";\n  if (!value) return "falsy";\n  return "other";\n}',
     o: ['"object"', '"falsy"', '"null"', '"other"'], a: 0,
@@ -46,6 +61,9 @@ CodeGym.add([
     verify: 'function describe(value) {\n  if (value === null) return "null";\n  if (typeof value === "object") return "object";\n  if (!value) return "falsy";\n  return "other";\n}\nconsole.log(JSON.stringify(describe([])));' },
 
   { id: 'trace-shift-push', type: 'trace', concept: 'arrays', d: 1,
+    at: 1,
+    hint: '`shift` removes and returns the first element, and `unshift` adds to the front.',
+    rule: '`push`/`pop` work on the end of an array and `shift`/`unshift` on the start. All of them change it in place.',
     q: 'What is `arr` after these lines?',
     c: 'const arr = [1, 2, 3];\narr.push(arr.shift());\narr.unshift(0);',
     o: ['[0, 2, 3, 1]', '[0, 1, 2, 3]', '[2, 3, 1, 0]', '[0, 3, 1, 2]'], a: 0,
@@ -55,6 +73,9 @@ CodeGym.add([
     verify: 'const arr = [1, 2, 3];\narr.push(arr.shift());\narr.unshift(0);\nconsole.log(arr);' },
 
   { id: 'trace-digit-sum', type: 'trace', concept: 'functions', d: 2,
+    at: 2,
+    hint: '`n % 10` is the last digit and `Math.floor(n / 10)` drops it.',
+    rule: 'To trace recursion, write each call on its own line down to the base case, then add the results back up.',
     q: 'What does `f(352)` return?',
     c: 'function f(n) {\n  if (n === 0) return 0;\n  return (n % 10) + f(Math.floor(n / 10));\n}',
     o: ['10', '352', '9', '3'], a: 0,
@@ -64,6 +85,9 @@ CodeGym.add([
     verify: 'function f(n) {\n  if (n === 0) return 0;\n  return (n % 10) + f(Math.floor(n / 10));\n}\nconsole.log(f(352));' },
 
   { id: 'trace-collatz', type: 'trace', concept: 'loops', d: 2,
+    at: 3,
+    hint: 'Write out the sequence 10 → 5 → … and count the steps until you reach 1.',
+    rule: 'For a while loop, keep a small table of each variable after every iteration.',
     q: 'What is `steps` when the loop ends?',
     c: 'let n = 10;\nlet steps = 0;\nwhile (n !== 1) {\n  n = n % 2 === 0 ? n / 2 : 3 * n + 1;\n  steps++;\n}',
     o: ['6', '5', '7', '10'], a: 0,
@@ -73,6 +97,9 @@ CodeGym.add([
     verify: 'let n = 10;\nlet steps = 0;\nwhile (n !== 1) {\n  n = n % 2 === 0 ? n / 2 : 3 * n + 1;\n  steps++;\n}\nconsole.log(steps);' },
 
   { id: 'trace-nested-loops', type: 'trace', concept: 'loops', d: 2,
+    at: 2,
+    hint: 'The inner loop starts at `i`, so it runs fewer times on each outer iteration: 4, then 3, …',
+    rule: 'When an inner loop depends on the outer variable, count each outer iteration separately and add them up.',
     q: 'How many times does `runs++` run?',
     c: 'let runs = 0;\nfor (let i = 0; i < 4; i++) {\n  for (let j = i; j < 4; j++) {\n    runs++;\n  }\n}',
     o: ['10', '16', '6', '12'], a: 0,
@@ -82,6 +109,9 @@ CodeGym.add([
     verify: 'let runs = 0;\nfor (let i = 0; i < 4; i++) {\n  for (let j = i; j < 4; j++) {\n    runs++;\n  }\n}\nconsole.log(runs);' },
 
   { id: 'trace-index-of', type: 'trace', concept: 'strings', d: 2,
+    at: 5,
+    hint: 'Each search starts one place after the previous hit, and `indexOf` returns -1 when nothing is left.',
+    rule: '`indexOf(x, from)` searches from a position and returns -1 when there is no match.',
     q: 'When the loop ends, what are `hits` and `i`?',
     c: 'const s = "banana";\nlet i = s.indexOf("a");\nlet hits = 0;\nwhile (i !== -1) {\n  hits++;\n  i = s.indexOf("a", i + 1);\n}',
     o: ['3 and -1', '3 and 5', '2 and -1', '6 and -1'], a: 0,
@@ -91,6 +121,9 @@ CodeGym.add([
     verify: 'const s = "banana";\nlet i = s.indexOf("a");\nlet hits = 0;\nwhile (i !== -1) {\n  hits++;\n  i = s.indexOf("a", i + 1);\n}\nconsole.log(hits + " and " + i);' },
 
   { id: 'trace-adder-closure', type: 'trace', concept: 'closures', d: 2,
+    at: 2,
+    hint: '`total` lives on between calls, and `+=` returns the new total.',
+    rule: 'A closure keeps its variables between calls, so it can accumulate state.',
     q: 'What is `result`?',
     c: 'function makeAdder(start) {\n  let total = start;\n  return (x) => (total += x);\n}\nconst add = makeAdder(10);\nadd(5);\nconst result = add(1);',
     o: ['16', '11', '15', '6'], a: 0,
@@ -100,6 +133,9 @@ CodeGym.add([
     verify: 'function makeAdder(start) {\n  let total = start;\n  return (x) => (total += x);\n}\nconst add = makeAdder(10);\nadd(5);\nconst result = add(1);\nconsole.log(result);' },
 
   { id: 'trace-block-scope', type: 'trace', concept: 'scope', d: 2,
+    at: 5,
+    hint: 'The inner `let x` is a different variable from the outer `x`, but `x = 2` on line 3 changes the outer one.',
+    rule: 'An assignment without `let` or `const` updates the nearest existing variable. A new `let` in a block creates a separate one.',
     q: 'After `update()` runs, what are `result` and the outer `x`?',
     c: 'let x = 1;\nfunction update() {\n  x = 2;\n  let y = x;\n  {\n    let x = 3;\n    y += x;\n  }\n  return y;\n}\nconst result = update();',
     o: ['5 and 2', '4 and 2', '5 and 3', '3 and 1'], a: 0,
@@ -109,6 +145,9 @@ CodeGym.add([
     verify: 'let x = 1;\nfunction update() {\n  x = 2;\n  let y = x;\n  {\n    let x = 3;\n    y += x;\n  }\n  return y;\n}\nconst result = update();\nconsole.log(result + " and " + x);' },
 
   { id: 'trace-reduce-counts', type: 'trace', concept: 'array-methods', d: 2,
+    at: 1,
+    hint: '`acc[ch] || 0` starts each new letter at 0.',
+    rule: 'To count with `reduce`, read the current count (default 0), add 1, and return the accumulator.',
     q: 'What is `counts`?',
     c: 'const counts = ["a", "b", "a", "c", "a"].reduce((acc, ch) => {\n  acc[ch] = (acc[ch] || 0) + 1;\n  return acc;\n}, {});',
     o: ['{ a: 3, b: 1, c: 1 }', '{ a: 1, b: 1, c: 1 }', '[3, 1, 1]', '{ a: 3 }'], a: 0,
@@ -118,6 +157,8 @@ CodeGym.add([
     verify: 'const counts = ["a", "b", "a", "c", "a"].reduce((acc, ch) => {\n  acc[ch] = (acc[ch] || 0) + 1;\n  return acc;\n}, {});\nconsole.log(counts);' },
 
   { id: 'trace-nested-reference', type: 'trace', concept: 'objects', d: 3,
+    at: 3,
+    rule: 'Changing a nested object shows through every shallow copy. Replacing it with a new object does not.',
     q: 'What is `b.inner.value` at the end?',
     c: 'const a = { inner: { value: 1 } };\nconst b = { ...a };\na.inner.value = 2;\na.inner = { value: 3 };',
     o: ['1', '2', '3', 'undefined'], a: 1,
@@ -128,6 +169,9 @@ CodeGym.add([
     verify: 'const a = { inner: { value: 1 } };\nconst b = { ...a };\na.inner.value = 2;\na.inner = { value: 3 };\nconsole.log(b.inner.value);' },
 
   { id: 'trace-log-sync', type: 'trace', concept: 'async', d: 2,
+    at: 3,
+    hint: 'Neither callback can run until the synchronous script has finished.',
+    rule: 'Callbacks from timers and promises always wait for the current synchronous code to finish.',
     q: 'What does `log` hold right after this script\'s synchronous code finishes?',
     c: 'const log = [];\nsetTimeout(() => log.push("timer"), 0);\nPromise.resolve().then(() => log.push("promise"));\nlog.push("sync");',
     o: ['["sync"]', '["sync", "promise"]', '["promise", "timer", "sync"]', '[]'], a: 0,
@@ -136,6 +180,9 @@ CodeGym.add([
     verify: 'const log = [];\nsetTimeout(() => log.push("timer"), 0);\nPromise.resolve().then(() => log.push("promise"));\nlog.push("sync");\nconsole.log(log);' },
 
   { id: 'trace-await-timing', type: 'trace', concept: 'async', d: 3,
+    at: 3,
+    hint: '`Promise.all` waits for the slowest promise, and its two waits run at the same time.',
+    rule: 'Sequential `await`s add up. Promises started together in `Promise.all` overlap, so it takes as long as the slowest.',
     q: 'Roughly how long after `main()` is called does "done" print?',
     c: 'const wait = (ms) => new Promise((r) => setTimeout(r, ms));\nasync function main() {\n  await wait(100);\n  await Promise.all([wait(200), wait(300)]);\n  console.log("done");\n}\nmain();',
     o: ['400 ms', '600 ms', '300 ms', '100 ms'], a: 0,
@@ -143,4 +190,26 @@ CodeGym.add([
     w: ['', 'The 200 ms and 300 ms waits overlap inside `Promise.all`.', 'The first `await` must finish before `Promise.all` even starts.', 'The second step waits for the 300 ms timer too.'],
     steps: ['0 ms: wait(100) starts', '100 ms: wait(200) and wait(300) start together', '400 ms: the slower one finishes → "done"'],
     verify: 'const wait = (ms) => new Promise((r) => setTimeout(r, ms));\nconst start = Date.now();\nasync function main() {\n  await wait(100);\n  await Promise.all([wait(200), wait(300)]);\n  console.log(Math.round((Date.now() - start) / 100) * 100 + " ms");\n}\nmain();' },
+
+  { id: 'trace-finally', type: 'trace', concept: 'errors', d: 2,
+    q: 'What are `log` and `result` at the end?',
+    c: 'const log = [];\nfunction load() {\n  try {\n    log.push("try");\n    throw new Error("x");\n  } catch (e) {\n    log.push("catch");\n    return "failed";\n  } finally {\n    log.push("finally");\n  }\n}\nconst result = load();',
+    o: ['["try", "catch"] and "failed"', '["try", "catch", "finally"] and "failed"', '["try", "catch", "finally"] and undefined', '["try", "finally"] and "failed"'], a: 1, at: 9,
+    hint: '`finally` runs even when `catch` returns, and it does not change the returned value.',
+    rule: '`finally` always runs, after `try` or `catch`, even when they `return`. Use it for clean-up.',
+    e: 'The `throw` jumps to `catch`, which logs and returns "failed". Before the function actually returns, `finally` runs and logs too. Since `finally` has no `return` of its own, "failed" is still the result.',
+    w: ['`finally` runs even when `catch` returns.', '', '`finally` does not replace the value returned by `catch`.', 'The `catch` block runs because line 5 throws.'],
+    steps: [{ l: 3, t: 'push "try"', v: { log: '["try"]' } }, { l: 4, t: 'throw: jump to catch' }, { l: 6, t: 'push "catch"', v: { log: '["try", "catch"]' } }, { l: 7, t: 'return "failed" (pending)' }, { l: 9, t: 'finally runs first: push "finally"', v: { log: '["try", "catch", "finally"]' } }, { l: 12, t: 'result = "failed"', v: { result: '"failed"' } }],
+    verify: 'const log = [];\nfunction load() {\n  try {\n    log.push("try");\n    throw new Error("x");\n  } catch (e) {\n    log.push("catch");\n    return "failed";\n  } finally {\n    log.push("finally");\n  }\n}\nconst result = load();\nconsole.log(JSON.stringify(log) + " and " + JSON.stringify(result));' },
+
+  { id: 'trace-click-state', type: 'trace', concept: 'dom', d: 2, also: ['closures'],
+    q: '`button` stands in for a real `<button>`. What does `label` hold after the three clicks?',
+    c: 'const button = new EventTarget();\nlet count = 0;\nlet label = "";\nbutton.addEventListener("click", () => {\n  count++;\n  if (count % 2 === 0) label = "even: " + count;\n});\nfor (let i = 0; i < 3; i++) button.dispatchEvent(new Event("click"));',
+    o: ['"even: 2"', '"even: 3"', '""', '"even: 1"'], a: 0, at: 5,
+    hint: 'The label only changes on even counts. Which counts are reached?',
+    rule: 'An event handler updates shared state each time it runs. Trace the state after every event, not just the last one.',
+    e: 'Each dispatched click runs the handler synchronously. The count goes 1, 2, 3, and the label is only set when the count is even, at 2. The third click leaves it alone.',
+    w: ['', 'The label is only set when the count is even, and 3 is odd.', 'The second click sets it.', 'With a count of 1, the condition is false.'],
+    steps: [{ l: 4, t: 'click 1', v: { count: '1', label: '""' } }, { l: 5, t: 'click 2: 2 % 2 === 0', v: { count: '2', label: '"even: 2"' } }, { l: 4, t: 'click 3: odd, label unchanged', v: { count: '3', label: '"even: 2"' } }],
+    verify: 'const button = new EventTarget();\nlet count = 0;\nlet label = "";\nbutton.addEventListener("click", () => {\n  count++;\n  if (count % 2 === 0) label = "even: " + count;\n});\nfor (let i = 0; i < 3; i++) button.dispatchEvent(new Event("click"));\nconsole.log(JSON.stringify(label));' },
 ]);
